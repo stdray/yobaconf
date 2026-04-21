@@ -52,8 +52,11 @@ Snapshot — первичный инструмент, property-тесты пов
 - [x] **Fallthrough:** `FallthroughTests.cs` — exact hit, missing leaf → ancestor, missing subtree → root-level, no ancestor → null, ancestor chain root-to-leaf ordering, skipped middle nodes. 6 тестов.
 - [x] **`NodePath` валидация slug:** `NodePathTests.cs` — валидные сегменты, round-trip между `.`- и `/`-нотацией, отклонение прописных букв / underscore / ведущий-тире / коротких сегментов / пробелов / точек внутри сегмента, `$`-системный префикс, `Parent` walk, `Root == default`, value-equality. 15 тестов.
 - [x] **HOCON merge smoke** (Phase A.1 follow-up): `HoconMergeTests.cs` — `.WithFallback` скаляры, deep objects, substitution через concat-before-parse, optional `${?var}`, required substitution бросает at parse-time. 5 тестов.
-- [ ] **Циклические инклуды между нодами:** `A → B → A` (мутуальные sibling-includes) ловится с понятной ошибкой, включает цепочку путей. Реализуется в preprocess-стадии через `HashSet<NodePath> visited`. Property test: произвольный цикл произвольной длины детектится.
-- [ ] **Include scope violation:** `include` target вне разрешённой области (descendant, sibling-subtree, self) → понятная ошибка. Permutation tests на all-vs-all комбинациях 4-нодного дерева.
+- [x] **Циклические инклуды между нодами:** `A → B → A` и `A → B → C → A` ловятся через `CyclicIncludeException` с полной цепочкой путей. Реализация — `IncludePreprocessor` с inflight `HashSet<NodePath>` + `Stack<NodePath>` для reporting. 2 теста.
+- [x] **Include scope violation:** descendant / sibling-subtree / self-include → `IncludeScopeViolationException` с понятным сообщением (named parties). 3 теста (по одному на каждый вариант).
+- [x] **Include target not found:** отсутствующая нода → `IncludeTargetNotFoundException` с target-полем. 2 теста (root + included-from-existing).
+- [x] **Unsupported HOCON forms:** `include file(...)` / `classpath(...)` / `url(...)` / `required(...)` / relative `"../"` → `UnsupportedIncludeSyntaxException`. 5 тестов (Theory + relative).
+- [x] **Positive include cases:** ancestor, sibling-same-dir, nested (3 уровня), dup-via-two-paths, trailing-comment, case-sensitive `include` keyword. 6 тестов.
 - [ ] **API-ключ scope (property test):** ключ на `yobaproj.yobaapp` видит `yobaproj.yobaapp.dev`, не видит `yobaproj.otherapp`; граничные случаи (exact match на `RootPath`, префикс-collision типа `yobaproj.yobaapplication` не должен проходить).
 - [ ] **ETag:** одинаковый вход → одинаковый хеш; `304 Not Modified` корректно; изменение любого включённого фрагмента инвалидирует.
 - [ ] **HOCON include-resolution:** инклуд несуществующего фрагмента — ошибка; защита от бесконечной глубины (DoS).
