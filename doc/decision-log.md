@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-04-21 — OpenTelemetry self-emission: gated on yobalog Phase F
+
+**Решение:** YobaConf получает **только** self-emission (эмитит OTel-spans своего `ResolvePipeline` + HTTP endpoint'ов + SQLite writes). OTLP-ingestion **не делаем** — YobaConf не log-store, этому не место. Metrics — тоже non-goal (территория Prometheus/Grafana). Реализуется как Phase C.5 между Phase C (secrets) и Phase D (client SDKs). Gate через `OpenTelemetry:Enabled` в `appsettings.json` (default `false` для pet-scale — включается когда реально нужно трассировать).
+
+**Сancerовая зависимость:** Phase C.5 **gated на yobalog Phase F completing** — до тех пор, пока у yobalog нет OTLP-endpoint'а, экспортировать некуда (точнее, экспортировать **можно**, но в сторонний collector — Seq 2023.2+, Jaeger, Tempo — что противоречит стратегии "всё в yobalog"). Синхронизация с yobalog: их Phase F проектируется с расчётом на то, что YobaConf будет первым dog-food клиентом через C.5. Они дают endpoint, мы даём им трафик — взаимно полезный порядок.
+
+**Причина пересмотра priority'а** (ранее в drafts было "self-emission value-gated, может ждать бесконечно"):
+- Реальность stack'а: ты — единственный user, у которого **5 реальных consumer'ов** yobaconf/yobalog (`KpVotes`, `yobapub`, `animemov-bot-cs`, `yobaspeach`, сам YobaConf). Это значит — **distributed tracing через 5 сервисов** = near-term must-have, не "nice-to-have".
+- Concrete use case: клиент шлёт команду в `animemov-bot`, тот дёргает YobaConf за конфигом, YobaConf фетчит из SQLite. Сейчас это 3 отдельных лог-потока — корреляция мануальная по timestamp'ам. С end-to-end trace'ами — одна waterfall-диаграмма в yobalog Phase H.
+- YobaConf **особенно** выигрывает от span-ов: pipeline его состоит из множества distinct стадий (fallthrough / variables / includes / parse / serialize), и текущая модель отладки ("добавил Console.WriteLine, пересобрал, развернул") плохо масштабируется. Spans делают эту видимость бесплатной.
+
+**Scope (что инструментируем):**
+- `ResolvePipeline` — root span `resolve` с child-spans per stage: `fallthrough-lookup`, `variables-resolve`, `include-preprocess`, `hocon-parse`, `json-serialize`, `etag-compute`.
+- HTTP endpoints (`/v1/conf/{path}`, `/health`, `/version`) — автоматически через `OpenTelemetry.Instrumentation.AspNetCore`.
+- SQLite writes (`SqliteConfigStore.AppendAudit`, `FindNode`) — **вручную** через `ActivitySource.StartActivity`, потому что `OpenTelemetry.Instrumentation.Sqlite` не существует (ни official, ни community — см. yobalog decision-log 903fd4a). 10-15 строк на method-границе.
+- IncludePreprocessor DFS — один root `include-preprocess` span с `yobaconf.includes.count` attribute; не эмитим child-spans per node (включения могут быть десятки → шум).
+
+**Out of scope:**
+- OTLP-ingestion (YobaConf ничего не ингестит кроме HTTP requests; это обрабатывается existing endpoint'ами).
+- Metrics (counters / gauges / histograms) — `OpenTelemetry.Metrics` не подключаем. Если понадобится "rps / p99 latency" — запроси через yobalog KQL (`summarize count() by bin(@t, 1m)` по span-data).
+- Logs через OTel Logging provider — уже есть CLEF-pipeline в yobalog (Phase 11 self-observability), не дублируем.
+- `Instrumentation.HttpClient` — YobaConf не делает outbound HTTP (кроме self-observability в yobalog, и там хватает auto-AspNetCore со стороны yobalog).
+
+**Технические решения:**
+- **OTLP HTTP/Protobuf only**, не gRPC — зеркалит yobalog Phase F (их же reasoning: default в 2026, не требует HTTP/2 через прокси, меньше dep-bloat).
+- **`OpenTelemetry.Proto` через NuGet**, не compile-from-source — зеркалит yobalog 903fd4a (proto-generated DTO = wire boundary exception, не escape от "max static typing" инварианта).
+- **Endpoint configurable**: `OpenTelemetry:OtlpEndpoint` default `http://localhost:4318/v1/traces` — работает с Seq 2023.2+, Jaeger, Tempo, yobalog (после Phase F). Отдельный package — один конфиг, любой collector.
+- **Service name**: `"yobaconf"` (default, override через `OpenTelemetry:ServiceName`). Стандартная OTel-конвенция (`service.name` resource attribute).
+- **Test gate**: `AddOpenTelemetry()` skipped под `IsEnvironment("Testing")` — тот же паттерн что `UseHttpsRedirection` skipped для Kestrel-based integration тестов. Span-unit-тесты поднимают `ActivityListener` вручную.
+
+**Rejected alternatives:**
+- **Полный OTel-suite (tracing + metrics + logging).** Metrics duplicate Prometheus, logging duplicates CLEF-pipeline. Для yobaconf хочется единственно нового — tracing, т.к. его сейчас нет.
+- **Ingest OTLP в yobaconf.** Не log-store. Нет смысла.
+- **Ждать Phase F finalization в yobalog перед тем как добавлять C.5 в план.** План-bullet сам по себе не вредит даже если F задержится — C.5 просто ждёт в списке. Симметрия phasing'а между yobalog и yobaconf помогает онбордингу.
+- **Делать Phase C.5 до Phase C (secrets).** Tracing over un-instrumented secret-path'а (C нет → secrets нет → pipeline без decrypt-стадии) даёт частичную картину. Лучше дождаться C — тогда `secrets-decrypt` span показывает ROI.
+
+**Открытые вопросы (решаются когда дойдём до реализации):**
+- Формат cross-service context propagation — W3C Trace Context (стандарт 2026) vs B3 (legacy). W3C по default в OpenTelemetry.NET — вероятно, просто берём.
+- Sampling: 100% (pet-scale, всегда) или конфигурируемый ratio (`OpenTelemetry:Sampling:Ratio`)? Начнём с 100%, добавим sampling когда появится реальная нагрузка.
+- Когда делать `OpenTelemetry:Enabled = true` by default? Вероятно — одновременно с переключением yobaconf на prod-окружение (когда первый из 5 consumer'ов реально упрётся во что-то debuggable через traces).
+
+**Cross-refs:**
+- yobalog decision-log 2026-04-21 "OpenTelemetry integration: scope + cost assessment" (commit 903fd4a) — корневое решение по всей OTel-стратегии стека.
+- yobalog Phase F bullets в их plan.md — будут работающим endpoint'ом для C.5.
+- spec §2 (будет обновлён при реализации — упоминание OpenTelemetry в target stack'е).
+
+---
+
 ## 2026-04-21 — Drop jQuery from UI stack; htmx + Alpine.js + vanilla TS only
 
 **Решение:** YobaConf фронт — htmx (server-driven HTML swaps) + Alpine.js (опциональный локальный state для модалок/toggle'ов) + собственный TS в `ts/admin.ts` (минимум). **jQuery не используется.** В spec §9 это теперь зафиксировано как negative invariant.
