@@ -73,4 +73,30 @@ public class HoconMergeTests
 			.Should().Throw<Hocon.HoconParserException>()
 			.WithMessage("*Unresolved substitution*db_host*");
 	}
+
+	// DoS-guard: mutually-referencing required substitutions (a = ${b}, b = ${a}) must fail
+	// with a clear parse error, not infinite-loop. Failure mode here lives inside the Hocon
+	// package — this test locks in that our version of the parser catches it. If a future
+	// upgrade regresses, we notice before prod.
+	[Fact]
+	public void MutualSubstitutionCycle_FailsAtParseTime()
+	{
+		FluentActions.Invoking(() => HoconConfigurationFactory.ParseString("""
+			a = ${b}
+			b = ${a}
+			"""))
+			.Should().Throw<Hocon.HoconParserException>();
+	}
+
+	// Three-party cycle — same guarantee as the two-party case but via a longer chain.
+	[Fact]
+	public void ThreeWaySubstitutionCycle_FailsAtParseTime()
+	{
+		FluentActions.Invoking(() => HoconConfigurationFactory.ParseString("""
+			a = ${b}
+			b = ${c}
+			c = ${a}
+			"""))
+			.Should().Throw<Hocon.HoconParserException>();
+	}
 }

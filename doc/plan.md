@@ -101,7 +101,7 @@ Snapshot — первичный инструмент, property-тесты пов
 - [x] **Лог аудита** — immutable, хранится всегда (`spec.md` §7).
 
 Остаются:
-- [ ] **Циклические ссылки в HOCON substitutions:** `a = ${b}, b = ${a}` в одном тексте — ловится парсером? Нужна защита от глубокой рекурсии (DoS). Проверить тестом в Phase A.
+- [x] **Циклические ссылки в HOCON substitutions:** `a = ${b}, b = ${a}` и 3-way цикл `a → b → c → a` — парсер бросает `HoconParserException` at parse-time. 2 теста в `HoconMergeTests.cs`. Защита от DoS по глубине рекурсии — на стороне Hocon 2.0.4, не нашей.
 - [ ] **Клиентские SDK:** обёртки для .NET (`IConfigurationProvider`), Python (Pydantic source), TS/Bun. Phase D.
 - [ ] **Rate limiting:** не реализуем в MVP (удалено из §11 self-observability). Phase E polish.
 - [ ] **Perf target:** soft goal "p99 < 50ms resolve+serialize на 1k нод" — проверяется когда появится нагрузочный тест.
