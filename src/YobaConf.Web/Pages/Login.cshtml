@@ -13,7 +13,7 @@
 	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
 </head>
 <body class="min-h-full flex items-center justify-center bg-base-300">
-	<form method="post" class="card w-96 bg-base-200 p-6 shadow-xl">
+	<form method="post" id="login-form" autocomplete="on" class="card w-96 bg-base-200 p-6 shadow-xl">
 		<h1 class="text-xl font-semibold mb-4">Sign in to YobaConf</h1>
 
 		@if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -23,17 +23,17 @@
 
 		<input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
 
-		<label class="form-control mb-3">
-			<span class="label-text">Username</span>
-			<input type="text" name="username" required autocomplete="username"
+		<div class="form-control mb-3">
+			<label for="login-username" class="label-text">Username</label>
+			<input type="text" id="login-username" name="username" required autocomplete="username"
 				class="input input-bordered" data-testid="login-username" value="@Model.Username" />
-		</label>
+		</div>
 
-		<label class="form-control mb-4">
-			<span class="label-text">Password</span>
-			<input type="password" name="password" required autocomplete="current-password"
+		<div class="form-control mb-4">
+			<label for="login-password" class="label-text">Password</label>
+			<input type="password" id="login-password" name="password" required autocomplete="current-password"
 				class="input input-bordered" data-testid="login-password" />
-		</label>
+		</div>
 
 		<button type="submit" class="btn btn-primary" data-testid="login-submit">Sign in</button>
 	</form>
