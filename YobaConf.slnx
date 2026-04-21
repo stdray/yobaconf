@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/YobaConf.Core/YobaConf.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/YobaConf.Tests/YobaConf.Tests.csproj" />
+  </Folder>
+</Solution>
