@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-04-22 — Phase C.5 OTel self-emission: applied, gate removed
+
+**Решение:** yobaconf эмитит spans через OTLP HTTP/Protobuf в yobalog's `/v1/traces`. Предыдущая запись "gated on yobalog Phase F" устарела — yobalog Phase H.2 (OTLP Traces ingestion) landed, endpoint живой, gate снят. Реализация в одном коммите.
+
+**Архитектура (копия yobalog pattern'а, адаптированная под yobaconf):**
+- **Два ActivitySource'а**, не пять: `YobaConf.Resolve` + `YobaConf.Storage.Sqlite`. У yobalog 5 потому что у него 5 модулей (Ingestion/Query/Retention/StorageSqlite/StorageTraces); у yobaconf архитектура флэте.
+- **`src/YobaConf.Core/Observability/ActivitySources.cs`** — const names + static instances, mirror yobalog `Core/Observability/ActivitySources.cs`.
+- **OTLP exporter, не SystemSpanExporter**. yobalog эмитит в свой собственный SQLite через `SystemSpanExporter` (он IS trace-ingest), yobaconf — клиент, HTTP'ом в `{YobaLog}/v1/traces`. `BatchActivityExportProcessor` автоматом через `.AddOtlpExporter()`.
+- **Auth header** — `X-Seq-ApiKey={YobaLog:ApiKey}`. Тот же ключ, тот же workspace, что для логов. yobalog's OTLP endpoint переиспользует Seq-compat auth (его spec §1).
+- **Filter на /health + /ready** в `AspNetCoreInstrumentation.Filter` — mirror yobalog. Probe-spam из Docker healthcheck / Caddy отсекается на instrumentation-уровне.
+- **HTTP root span — automatic** через `OpenTelemetry.Instrumentation.AspNetCore` (source `Microsoft.AspNetCore.Hosting.HttpRequestIn`). Не добавляем ручной root — children нестятся в auto-root естественно.
+
+**Инструментация:**
+- `ResolvePipeline.Resolve`: 7 spans (root `yobaconf.resolve` + 6 стадий). Attributes — минимальные: `yobaconf.path` на root, `yobaconf.resolved` на fallthrough-lookup (важно для debug'а fallthrough), `yobaconf.variables.count` на variables-resolve. `yobaconf.includes.count` пропущен — требует расширения `IncludePreprocessor.Resolve` с out-param'ом; отдельный коммит, не блокирует MVP.
+- `SqliteConfigStore`: все public read/write методы. Имена `sqlite.<op>` для консистентности с yobalog's `sqlite.append-batch` / `sqlite.query`. Attribute `yobaconf.path` на path-specific операциях.
+
+**Gates (тройная):**
+1. `OpenTelemetry:Enabled == true` — off by default в `appsettings.json`, prod включает через env var.
+2. `!IsEnvironment("Testing")` — юнит/интеграционные тесты не платят ActivityListener-tax (tests с assertions поднимают свой listener).
+3. `!string.IsNullOrWhiteSpace(OtlpEndpoint)` — без endpoint'а exporter не зарегистрирован (fail-closed).
+
+**Секреты:**
+- Новые GitHub secrets: `YOBACONF_OTEL_ENABLED` = `"true"`, `YOBACONF_OTLP_ENDPOINT` = `"https://yobalog.3po.su/v1/traces"`.
+- API-key reuses `YOBALOG_API_KEY` (тот же workspace).
+- Прокидка в `docker run` через `envs:`-passthrough паттерн (см. 2026-04-21 `fix(ci)` commit).
+
+**Тесты:** 5 `TracingTests` через `ActivityListener` + **probe-scoped TraceId filtering**. Listener — process-wide; параллельные тест-классы (`ResolvePipelineTests` / `IncludePreprocessorTests`) после инструментации тоже эмитят spans и попадали в capture. Решение — pre-start'ить probe-activity на test-local source, filter captured по `a.TraceId == probe.TraceId`. Parallel test's Resolve не имеет Activity.Current при старте → их TraceId фиксированно отличается, фильтр их отсекает.
+
+**Что откатили:** предыдущую попытку "logs as telemetry" — `ConfEndpointHandler.Done(logger, ...)` с `Resolve {Path} -> {Status} ...` LogInformation'ом. Это было правильное архитектурное решение user'а (option B в discuss) — логи шли по пути, который трейсинг закрывает лучше (per-stage durations, cross-service correlation через TraceId, waterfall UI). Domain-event через логи остался бы дубликатом span'а.
+
+**Что откатили из ранее сказанного:** запись "2026-04-21 OpenTelemetry self-emission: gated on yobalog Phase F" — gate больше не актуален.
+
+**Cross-refs:**
+- yobalog `src/YobaLog.Core/Observability/ActivitySources.cs` — reference implementation
+- yobalog `src/YobaLog.Web/YobaLogApp.cs` — `AddOpenTelemetry` wiring pattern
+- yobalog `doc/decision-log.md` 2026-04-21 "OpenTelemetry integration" — корневое решение по OTel-стратегии стека
+- `doc/plan.md` Phase C.5 — bullet-check для консьюмеров
+
+---
+
 ## 2026-04-21 — Logging policy: shared workspace, короткая PascalCase-таксономия, scope-enrichment
 
 **Решения зафиксированы в `doc/logging-policy.md`** — самодостаточный файл, пригодный для копирования в консьюмер-проекты (yobapub, kpvotes, animemov-bot-cs, yobaspeach) без cross-ref'ов. Ключевые решения:

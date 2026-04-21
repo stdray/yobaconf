@@ -3,7 +3,11 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using YobaConf.Core;
+using YobaConf.Core.Observability;
 using YobaConf.Core.Storage;
 
 namespace YobaConf.Web;
@@ -66,6 +70,51 @@ public static class YobaConfApp
 				.Build());
 
 		builder.Services.AddRazorPages();
+
+		// Phase C.5 OpenTelemetry self-emission. Gated on OpenTelemetry:Enabled == true
+		// (default false in appsettings — production turns it on via env var) AND
+		// !IsEnvironment("Testing") so unit/integration tests don't pay the
+		// ActivityListener tax. Tests that need to assert emission opt in via their own
+		// ActivityListener (see tests/YobaConf.Tests/Observability/TracingTests.cs).
+		//
+		// The OTLP exporter ships spans to yobalog's `/v1/traces` endpoint over HTTP/Protobuf.
+		// Auth reuses YobaLog:ApiKey — same key, same workspace as CLEF logs ingestion.
+		// Resource attribute `service.name` is the yobalog workspace tag used to group
+		// spans by service in the waterfall UI.
+		var otelEnabled = builder.Configuration.GetValue("OpenTelemetry:Enabled", false);
+		var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
+		if (otelEnabled
+			&& !builder.Environment.IsEnvironment("Testing")
+			&& !string.IsNullOrWhiteSpace(otlpEndpoint))
+		{
+			var serviceName = builder.Configuration["OpenTelemetry:ServiceName"] ?? "yobaconf";
+			var serviceVersion = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
+			var apiKey = builder.Configuration["YobaLog:ApiKey"] ?? string.Empty;
+
+			builder.Services.AddOpenTelemetry()
+				.ConfigureResource(r => r.AddService(serviceName, serviceVersion: serviceVersion))
+				.WithTracing(tracing => tracing
+					.AddSource(
+						ActivitySources.ResolveSourceName,
+						ActivitySources.StorageSqliteSourceName)
+					.AddAspNetCoreInstrumentation(opts =>
+					{
+						// Skip probe noise — /health /ready get hit every few seconds by
+						// Docker healthcheck / Caddy probe / future k8s readiness; filling
+						// yobalog's spans.db with these is pure waste.
+						opts.Filter = ctx =>
+							!ctx.Request.Path.StartsWithSegments("/health")
+							&& !ctx.Request.Path.StartsWithSegments("/ready");
+					})
+					.AddOtlpExporter(o =>
+					{
+						o.Endpoint = new Uri(otlpEndpoint);
+						o.Protocol = OtlpExportProtocol.HttpProtobuf;
+						// X-Seq-ApiKey auth — yobalog's OTLP endpoint reuses the Seq-compat
+						// auth header (spec yobalog doc/spec.md §1). Same key value as logs.
+						o.Headers = $"X-Seq-ApiKey={apiKey}";
+					}));
+		}
 	}
 
 	public static void Configure(WebApplication app)

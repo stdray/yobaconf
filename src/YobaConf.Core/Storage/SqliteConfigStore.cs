@@ -4,6 +4,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using Microsoft.Extensions.Options;
+using YobaConf.Core.Observability;
 
 namespace YobaConf.Core.Storage;
 
@@ -16,6 +17,11 @@ namespace YobaConf.Core.Storage;
 // long-held state in this class. If benchmarks ever show this is a bottleneck, swap to
 // a pooled DataContext — all read paths here are structured to allow that change without
 // API fallout.
+//
+// Phase C.5 tracing: every public I/O method wraps its body in `sqlite.<op>` activity so
+// yobalog's waterfall shows per-DB-call duration as a child of yobaconf.resolve /
+// yobaconf.fallthrough-lookup / yobaconf.variables-resolve. Span creation is a no-op when
+// no listener is attached (unit tests, OpenTelemetry:Enabled=false).
 public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 {
 	readonly string dbPath;
@@ -48,6 +54,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 
 	public HoconNode? FindNode(NodePath path)
 	{
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.find-node");
+		activity?.SetTag("yobaconf.path", path.ToDbPath());
 		using var db = Open();
 		var canonical = path.ToDbPath();
 		var row = db.GetTable<NodeRow>()
@@ -60,17 +68,21 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 
 	public IReadOnlyList<NodePath> ListNodePaths()
 	{
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.list-node-paths");
 		using var db = Open();
 		var paths = db.GetTable<NodeRow>()
 			.Where(r => r.IsDeleted == 0)
 			.OrderBy(r => r.Path)
 			.Select(r => r.Path)
 			.ToArray();
+		activity?.SetTag("yobaconf.nodes.count", paths.Length);
 		return [.. paths.Select(NodePath.ParseDb)];
 	}
 
 	public IReadOnlyList<Variable> FindVariables(NodePath scope)
 	{
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.find-variables");
+		activity?.SetTag("yobaconf.path", scope.ToDbPath());
 		using var db = Open();
 		var canonical = scope.ToDbPath();
 		var rows = db.GetTable<VariableRow>()
@@ -81,6 +93,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 
 	public IReadOnlyList<Secret> FindSecrets(NodePath scope)
 	{
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.find-secrets");
+		activity?.SetTag("yobaconf.path", scope.ToDbPath());
 		using var db = Open();
 		var canonical = scope.ToDbPath();
 		var rows = db.GetTable<SecretRow>()
@@ -96,6 +110,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 	public void UpsertNode(NodePath path, string rawContent, DateTimeOffset updatedAt)
 	{
 		ArgumentNullException.ThrowIfNull(rawContent);
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.upsert-node");
+		activity?.SetTag("yobaconf.path", path.ToDbPath());
 		using var db = Open();
 		var canonical = path.ToDbPath();
 		var hash = Sha256Hex(rawContent);
@@ -129,6 +145,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 	{
 		ArgumentNullException.ThrowIfNull(key);
 		ArgumentNullException.ThrowIfNull(value);
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.upsert-variable");
+		activity?.SetTag("yobaconf.path", scope.ToDbPath());
 		using var db = Open();
 		var canonical = scope.ToDbPath();
 		var hash = Sha256Hex(value);
@@ -161,6 +179,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 		ArgumentNullException.ThrowIfNull(iv);
 		ArgumentNullException.ThrowIfNull(authTag);
 		ArgumentNullException.ThrowIfNull(keyVersion);
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.upsert-secret");
+		activity?.SetTag("yobaconf.path", scope.ToDbPath());
 		using var db = Open();
 		var canonical = scope.ToDbPath();
 		var hash = Sha256HexOfBytes(encryptedValue);
@@ -194,6 +214,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 
 	public void SoftDeleteNode(NodePath path)
 	{
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.soft-delete-node");
+		activity?.SetTag("yobaconf.path", path.ToDbPath());
 		using var db = Open();
 		var canonical = path.ToDbPath();
 		_ = db.GetTable<NodeRow>()
@@ -205,6 +227,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 	public void SoftDeleteVariable(NodePath scope, string key)
 	{
 		ArgumentNullException.ThrowIfNull(key);
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.soft-delete-variable");
+		activity?.SetTag("yobaconf.path", scope.ToDbPath());
 		using var db = Open();
 		var canonical = scope.ToDbPath();
 		_ = db.GetTable<VariableRow>()
@@ -216,6 +240,8 @@ public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 	public void SoftDeleteSecret(NodePath scope, string key)
 	{
 		ArgumentNullException.ThrowIfNull(key);
+		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.soft-delete-secret");
+		activity?.SetTag("yobaconf.path", scope.ToDbPath());
 		using var db = Open();
 		var canonical = scope.ToDbPath();
 		_ = db.GetTable<SecretRow>()

@@ -181,7 +181,33 @@ dotnet user-secrets set "YobaLog:ApiKey"    "<dev-workspace-key>"               
 
 Leaving them unset = local runs log only to console, no yobalog traffic.
 
-## Step 7 — add API keys for runtime clients
+## Step 7 — enable OpenTelemetry tracing (Phase C.5)
+
+yobaconf emits spans from `ResolvePipeline` + SQLite read/write methods + the ASP.NET
+Core root span to yobalog's OTLP `/v1/traces` endpoint. Auth reuses `YOBALOG_API_KEY`
+(same key, same workspace as CLEF logs). Two additional GitHub secrets:
+
+- `YOBACONF_OTEL_ENABLED` — set to the literal string `"true"` to turn the exporter on.
+  Anything else (empty, `"false"`, unset) keeps it off; container runs without OTel
+  wiring.
+- `YOBACONF_OTLP_ENDPOINT` — full URL, e.g. `https://yobalog.3po.su/v1/traces`. The OTel
+  exporter does NOT append a path — the URL must be the trace-ingest endpoint itself.
+
+The deploy workflow forwards both via `envs:`-passthrough. Next `deploy` tag picks
+them up. Verify by opening yobalog's waterfall UI at
+`https://yobalog.3po.su/trace/<trace-id>` for any request to `/v1/conf/...` — you
+should see a root HTTP span with children `yobaconf.resolve` → `yobaconf.fallthrough-
+lookup` / `yobaconf.variables-resolve` / `yobaconf.include-preprocess` / `yobaconf.hocon-
+parse` / `yobaconf.json-serialize` / `yobaconf.etag-compute`, plus per-call `sqlite.*`
+spans wherever `IConfigStore` was hit.
+
+If no spans show up:
+- `docker logs yobaconf --tail 50` — any OTel registration error on startup?
+- Check `YOBACONF_OTEL_ENABLED` is the literal `"true"`, not `"1"` / `"True"`.
+- Endpoint reachable from the container? `docker exec yobaconf wget -qO- <endpoint>`
+  is chiseled-image-blocked (no shell); instead curl from the host.
+
+## Step 8 — add API keys for runtime clients
 
 YobaConf reads API keys from `appsettings.json` under `ApiKeys:Keys[]`. To add one in
 production without rebuilding, use a mounted `appsettings.Production.json` or env-var

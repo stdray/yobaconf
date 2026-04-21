@@ -20,6 +20,15 @@
 		     Datalust — no Serilog stack. See doc/decision-log.md 2026-04-21. -->
 		<PackageVersion Include="Seq.Extensions.Logging" Version="9.0.0" />
 
+		<!-- OpenTelemetry Phase C.5: emit spans from the resolve pipeline + SQLite store
+		     to yobalog's OTLP /v1/traces endpoint (HTTP/Protobuf, X-Seq-ApiKey auth).
+		     Versions matched to yobalog's pins (1.15.1 core; instrumentation 1.12.0 —
+		     that family lags core by one minor). -->
+		<PackageVersion Include="OpenTelemetry" Version="1.15.1" />
+		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.1" />
+		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.1" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
+
 		<!-- Transitive pins: Hocon.Configuration 2.0.4 brings in an old System.Configuration.ConfigurationManager
 		     whose chain pulls System.Drawing.Common 4.7.0 (CVE-GHSA-rxg9-xrhp-64gj). Pin forward. -->
 		<PackageVersion Include="System.Configuration.ConfigurationManager" Version="10.0.0" />

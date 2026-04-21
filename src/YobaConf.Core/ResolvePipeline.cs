@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Hocon;
 using YobaConf.Core.Include;
+using YobaConf.Core.Observability;
 using YobaConf.Core.Serialization;
 
 namespace YobaConf.Core;
@@ -29,29 +30,68 @@ namespace YobaConf.Core;
 //
 // Secrets (Phase C): a future overload will take ISecretDecryptor and merge decrypted secrets
 // into the variables-fragment at step 3. Variables-only pipeline is what Phase A ships.
+//
+// Phase C.5 tracing: each stage is wrapped in an ActivitySource.StartActivity span — when
+// no listener is attached (unit tests, OpenTelemetry:Enabled=false) StartActivity returns
+// null and `using (null)` is a no-op, so zero overhead. With the OTLP exporter wired these
+// spans land in yobalog's waterfall UI with tag `yobaconf.path` on the root and per-stage
+// duration on children. See doc/decision-log.md 2026-04-21 Phase C.5.
 public static class ResolvePipeline
 {
 	public static ResolveResult Resolve(NodePath requestedPath, IConfigStore store)
 	{
 		ArgumentNullException.ThrowIfNull(store);
 
-		var bestMatch = NodeResolver.FindBestMatch(store, requestedPath)
-			?? throw new NodeNotFoundException(requestedPath);
+		using var rootActivity = ActivitySources.Resolve.StartActivity("yobaconf.resolve");
+		rootActivity?.SetTag("yobaconf.path", requestedPath.ToDbPath());
 
-		var variableSet = VariableScopeResolver.Resolve(requestedPath, store);
+		HoconNode? bestMatch;
+		using (var a = ActivitySources.Resolve.StartActivity("yobaconf.fallthrough-lookup"))
+		{
+			bestMatch = NodeResolver.FindBestMatch(store, requestedPath);
+			a?.SetTag("yobaconf.resolved", bestMatch?.Path.ToDbPath());
+		}
+		if (bestMatch is null)
+			throw new NodeNotFoundException(requestedPath);
+
+		VariableSet variableSet;
+		using (var a = ActivitySources.Resolve.StartActivity("yobaconf.variables-resolve"))
+		{
+			variableSet = VariableScopeResolver.Resolve(requestedPath, store);
+			a?.SetTag("yobaconf.variables.count", variableSet.Variables.Length);
+		}
+
 		var variablesHocon = HoconVariableRenderer.Render(variableSet.Variables);
 
-		var flatHocon = IncludePreprocessor.Resolve(bestMatch.Path, store);
+		string flatHocon;
+		using (ActivitySources.Resolve.StartActivity("yobaconf.include-preprocess"))
+		{
+			flatHocon = IncludePreprocessor.Resolve(bestMatch.Path, store);
+		}
 
 		var combined = variablesHocon + flatHocon;
 
 		// If the combined text is whitespace-only (empty node, no variables) Hocon throws —
 		// default to "{}" so an empty config round-trips as an empty JSON object.
 		var parseInput = string.IsNullOrWhiteSpace(combined) ? "{}" : combined;
-		var parsed = HoconConfigurationFactory.ParseString(parseInput);
 
-		var json = HoconJsonSerializer.SerializeToJson(parsed);
-		var etag = ComputeETag(json);
+		Config parsed;
+		using (ActivitySources.Resolve.StartActivity("yobaconf.hocon-parse"))
+		{
+			parsed = HoconConfigurationFactory.ParseString(parseInput);
+		}
+
+		string json;
+		using (ActivitySources.Resolve.StartActivity("yobaconf.json-serialize"))
+		{
+			json = HoconJsonSerializer.SerializeToJson(parsed);
+		}
+
+		string etag;
+		using (ActivitySources.Resolve.StartActivity("yobaconf.etag-compute"))
+		{
+			etag = ComputeETag(json);
+		}
 
 		return new ResolveResult(json, etag);
 	}

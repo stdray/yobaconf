@@ -132,11 +132,13 @@ jobs:
           MASTER_KEY: ${{ secrets.YOBACONF_MASTER_KEY }}
           YOBALOG_URL: ${{ secrets.YOBALOG_SERVER_URL }}
           YOBALOG_KEY: ${{ secrets.YOBALOG_API_KEY }}
+          OTEL_ENABLED: ${{ secrets.YOBACONF_OTEL_ENABLED }}
+          OTLP_ENDPOINT: ${{ secrets.YOBACONF_OTLP_ENDPOINT }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
-          envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,YOBALOG_URL,YOBALOG_KEY
+          envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,YOBALOG_URL,YOBALOG_KEY,OTEL_ENABLED,OTLP_ENDPOINT
           script: |
             set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
@@ -160,5 +162,7 @@ jobs:
               -e YOBACONF_MASTER_KEY="$MASTER_KEY" \
               -e YobaLog__ServerUrl="$YOBALOG_URL" \
               -e YobaLog__ApiKey="$YOBALOG_KEY" \
+              -e OpenTelemetry__Enabled="$OTEL_ENABLED" \
+              -e OpenTelemetry__OtlpEndpoint="$OTLP_ENDPOINT" \
               "$IMAGE"
             docker system prune -a -f

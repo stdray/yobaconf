@@ -12,6 +12,15 @@
 		<PackageReference Include="Seq.Extensions.Logging" />
 	</ItemGroup>
 
+	<!-- Phase C.5 self-emission. Gated on OpenTelemetry:Enabled config + !IsEnvironment(Testing)
+	     in YobaConfApp.ConfigureServices — unit tests don't pay the ActivityListener tax
+	     unless they explicitly register their own listener (see TracingTests fixture). -->
+	<ItemGroup>
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+	</ItemGroup>
+
 	<!-- Frontend is Release-only from MSBuild. Debug relies on the Cake `Dev` target (or
 	     a manual `bun run dev`) so dotnet watch doesn't fight the bun watcher for wwwroot/
 	     output, and Rider's long-lived Web process doesn't block the bun-build output-copy step. -->
