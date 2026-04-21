@@ -4,8 +4,10 @@
 
 ## 1. Архитектурные принципы
 - **Единый источник истины (SSoT).** Все настройки и секреты хранятся в центральном сервисе.
-- **Иерархическое наследование.** Конфиги — узлы в дереве (по аналогии с файловой системой). Дочерние узлы наследуют и переопределяют настройки родительских.
-- **Fallthrough (откат).** Если запрошенный специфичный узел (например, `app/dev/feature`) не существует, сервис автоматически отдаёт ближайший существующий родительский (`app/dev`).
+- **Иерархия — в путях и авторизации, не в автоматическом merge.** Пути задают namespace и границы ACL (API-ключ scoped на `RootPath`). Контент нод сам по себе **не сливается** автоматически с родителями — каждая нода возвращает ровно тот HOCON, который в ней записан, плюс явно заинклуженные блоки.
+- **Explicit `include`.** Если автор ноды хочет подмешать родительский блок (например, общий `logger-base` из корня), он пишет `include "root"` в тексте. Правило: **target include-директивы должен быть ancestor включающей ноды** по path. Это запрещает sibling- и descendant-инклуды, гарантирует отсутствие циклов по конструкции, и заставляет зависимость быть видимой в коде. См. `decision-log.md` 2026-04-21 "Include поддерживаем, не откладываем".
+- **Fallthrough (откат) — routing, не merge.** Если запрошенный `app/dev/feature` не существует — отдаём контент ближайшей существующей родительской ноды (`app/dev`) как есть. Никаких аggregatн'ых мержей с другими нодами в процессе fallthrough'а — только один "best-match" узел.
+- **Переменные/секреты наследуются по scope.** В отличие от HOCON-контента, variables и secrets видны всем descendants их `ScopePath` автоматически (без explicit include). Коллизия `Key` — побеждает ближайший scope. Это "пассивная видимость" — variable не вклинивается в результирующий JSON, пока кто-то не сошлётся на неё через `${name}`.
 - **Разделение форматов:**
     - **Для редактирования (сервер):** HOCON (поддерживает комментарии, инклуды, переменные, логику).
     - **Для доставки (клиент):** чистый JSON (уже собранный, со всеми подстановками).
@@ -37,9 +39,11 @@
 - `Id` INTEGER PK.
 - `Key` TEXT — имя переменной (`db_host`).
 - `Value` TEXT — открытый текст.
-- `ScopePath` TEXT — путь, на котором видна переменная; наследуется потомками по тем же правилам, что RawContent (§4).
+- `ScopePath` TEXT — путь, на котором видна переменная; наследуется всеми descendants, ближайший scope перебивает дальний при коллизии Key.
 - `ContentHash` TEXT — sha256(Value) для optimistic lock.
-- UNIQUE (`ScopePath`, `Key`).
+- `UpdatedAt` INTEGER — unix ms.
+- `IsDeleted` INTEGER (0/1) — soft delete.
+- UNIQUE (`ScopePath`, `Key`) WHERE `IsDeleted = 0`.
 
 `Secrets`:
 - `Id` INTEGER PK.
@@ -50,7 +54,9 @@
 - `KeyVersion` TEXT — идентификатор версии мастер-ключа, которым зашифровано (для graceful rotation).
 - `ScopePath` TEXT — те же правила видимости, что у Variables.
 - `ContentHash` TEXT — sha256(EncryptedValue) для optimistic lock.
-- UNIQUE (`ScopePath`, `Key`).
+- `UpdatedAt` INTEGER — unix ms.
+- `IsDeleted` INTEGER (0/1) — soft delete.
+- UNIQUE (`ScopePath`, `Key`) WHERE `IsDeleted = 0`.
 
 ### ApiKeys (ключи доступа)
 - `Id` INTEGER PK.
@@ -66,24 +72,23 @@
 - `Id` INTEGER PK.
 - `Kind` TEXT — `'node'` / `'variable'` / `'secret'` / `'apikey'`.
 - `TargetId` INTEGER — ID строки в соответствующей таблице.
-- `OldContent` TEXT | BLOB — предыдущее значение. Для `Kind = 'secret'` — encrypted blob + IV + AuthTag + KeyVersion (НИКОГДА plaintext).
+- `TargetPath` TEXT — путь ноды / `ScopePath` variable-or-secret'а. Денормализовано для UI-timeline (см. §7): админка показывает историю "по пути" унифицированно для nodes/variables/secrets.
+- `OldContent` TEXT | BLOB — предыдущее значение. Для `Kind = 'secret'` — encrypted blob + IV + AuthTag + KeyVersion (никогда plaintext).
 - `ChangedAt` INTEGER — unix ms.
-- `UserId` TEXT — автор изменения (для API-ключ-driven изменений = `TokenPrefix` ключа).
+- `UserId` TEXT — username админа из cookie-auth. В MVP single-admin (из `appsettings.json`); multi-admin история — Phase B+.
 
 ## 4. Бизнес-логика (конвейер обработки)
 1. **Запрос.** Клиент шлёт `GET /v1/conf/{path}` + API-ключ.
-2. **Авторизация (до любого lookup'а).** Валидация ключа + проверка, что запрошенный `path` — потомок `RootPath` ключа (посегментное сравнение, не `StartsWith`, см. §8). **403 раньше 404**: если ключ не даёт доступа — отвечаем `403` без намёка на существование ноды. Только когда доступ разрешён, идём в шаг 3.
-3. **Поиск (ancestor chain для наследования).**
-    - Fallthrough: ищем ближайшую существующую ноду от `path` вверх до корня, пропуская `IsDeleted=1`. Если ни одна не найдена — `404`.
-    - Собираем весь ancestor chain (от root до best-match leaf), тоже пропуская soft-deleted ноды.
+2. **Авторизация (до любого lookup'а).** Валидация ключа + проверка, что запрошенный `path` — потомок `RootPath` ключа (посегментное сравнение, не `StartsWith`, см. §8). **403 раньше 404**: если ключ не даёт доступа — отвечаем `403` без намёка на существование ноды. Только когда доступ разрешён — шаг 3.
+3. **Fallthrough (routing).** Ищем ближайшую существующую non-deleted ноду от `path` вверх до корня. Если ни одна не найдена — `404`. Результат — одна "best-match" нода; **никакого автомержа ancestors на этом этапе**.
 4. **Сборка HOCON.**
-    - Подгрузка Variables + Secrets, чей `ScopePath` — ancestor текущего `path` (включая сам `path`). Ближайший scope перебивает дальний при коллизии Key.
+    - Подгрузка Variables + Secrets, чей `ScopePath` — ancestor best-match ноды (включая сам path best-match'а). Ближайший scope перебивает дальний при коллизии Key.
     - Дешифровка Secrets по мастер-ключу (env) с учётом `KeyVersion`.
     - Рендер variables+secrets в HOCON-фрагмент (`key = "value"` на строку).
-    - Конкатенация: `variables-hocon` + `parent-N RawContent` + ... + `parent-1 RawContent` + `leaf RawContent` (root → leaf).
+    - **Резолвинг `include`-директив в best-match RawContent:** для каждого `include "target-path"` — валидация (target — proper ancestor of best-match path; иначе parse error), загрузка target'а, рекурсивная обработка его include-директив (кэшируется в рамках запроса, чтобы повторный include той же ноды не дёргал БД). Глубина ограничена (≤ depth of best-match path по конструкции — include только вверх).
+    - Конкатенация: `variables-hocon` + все заинклуженные блоки + `best-match RawContent` (порядок включения важен для substitution resolve).
     - Единый `HoconConfigurationFactory.ParseString(...)`. Substitutions резолвятся at parse-time (см. `decision-log.md` 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time").
-    - **Ancestor-only inheritance:** MVP не поддерживает explicit `include`-директивы в `RawContent`; наследование — только через автоматический ancestor merge. Если `include` встречается в тексте — parse error. См. `decision-log.md` 2026-04-21 "Include-семантика".
-5. **Сериализация.** HOCON-дерево → `System.Text.Json`. Объекты, строки, числа, bool, массивы — по прямому маппингу. HOCON-специфичная запись `a.b.c = 1` нормализуется в вложенные объекты.
+5. **Сериализация.** HOCON-дерево → `System.Text.Json`. Объекты, строки, числа, bool, массивы — прямой маппинг. HOCON-специфичная запись `a.b.c = 1` нормализуется во вложенные объекты.
 6. **ETag и ответ.**
     - `ETag = first-16-hex-chars(sha256(rendered-json-bytes))`, strong ETag (без `W/` префикса).
     - Если `If-None-Match` header совпадает — `304 Not Modified`, пустое тело.
@@ -100,7 +105,7 @@
 - **Хранилище (Vault).** Управление секретами с маскировкой значений (`******`).
 
 ## 6. Масштабируемость и отказоустойчивость
-- **Без кэша на старте.** Сборка "на лету" — SQLite indexed lookup по `Path` + in-memory merge HOCON. Soft target: p99 resolve+serialize < 50ms на дереве в 1k нод (меряем когда появится нагрузочный тест).
+- **Без кэша на старте.** Сборка "на лету" — SQLite indexed lookup по `Path` + include-резолвинг + in-memory HOCON parse. Целевой профиль — pet-projects, нагрузка около 0. Performance target не фиксируется заранее: когда появится нагрузочный тест — baseline фиксируется в `perf-baseline.md` (зеркально yobalog), дальше следим за регрессией.
 - **Поддержка ETag.** Финальный JSON → sha256 → 16-hex-chars strong ETag (§4.6). Клиент шлёт `If-None-Match` → `304` без тела.
 - **Путь развития.** Экспорт ("push") готовых JSON в Redis, Consul или S3 для сверхвысоких нагрузок (Phase E).
 
@@ -108,9 +113,10 @@
 - **Immutable history через `AuditLog`.** Любое изменение `Nodes.RawContent`, `Variables.Value`, `Secrets.EncryptedValue`, `ApiKeys.*` кладёт предыдущее значение в `AuditLog` (§3) с `ChangedAt` + `UserId`. Ретенция — **вечно**, без TTL (в отличие от логов в yobalog).
 - **Секреты в аудите всегда encrypted.** Type-safe: `AuditLog.Kind='secret'` ветвь работает с blob + IV + AuthTag + KeyVersion, никогда с plaintext. Мастер-ключ для дешифровки старого snapshot'а — текущий env var (поэтому `KeyVersion` в `AuditLog` нужен — ротация ключа не ломает историю).
 - **Soft delete.** Ноды помечаются `IsDeleted=1`, не удаляются физически. Fallthrough (§4) их пропускает — клиент получает результат, как если бы ноды не существовало. То же для Variables/Secrets (поле добавляется при первой реализации).
-- **Restore удалённого = новая запись из истории.** В UI на странице ноды/переменной видна timeline `AuditLog`. "Восстановить" = создать новую запись с `RawContent`/`Value` из выбранного snapshot'а + `IsDeleted=0`. Механизм покрывает и undo accidental delete, и rollback к произвольной точке. Secret restore использует ту же ветку — encrypted blob перекладывается из `AuditLog` в `Secrets`.
-- **Optimistic locking при редактировании.** Каждая таблица с пользовательским контентом (`Nodes`, `Variables`, `Secrets`) имеет `ContentHash` column. UI-редактор шлёт `expectedHash` при save → `UPDATE ... WHERE Id=@id AND ContentHash=@expected`; rows affected = 0 → conflict modal (three-way diff, inspired by stdray.Obsidian ConflictSolverService).
-- **Diff в UI.** Текущая версия vs любой snapshot из `AuditLog` — текстовый diff на `RawContent` (HOCON-aware syntax highlighting через Monaco diff-editor).
+- **Unified timeline в UI.** На странице path `/a/b/c` показывается **единая timeline** событий `AuditLog` для этого пути: изменения ноды (Kind=node), Variables с `ScopePath` = этот path, Secrets с тем же ScopePath, изменения API-ключей с RootPath = этот path. Навигация prev/next-state работает через объединённую history, не раздельно по сущностям — рассуждения пользователя типа "что происходило в /yobapub/prod вчера" не должны требовать переключения между тремя вкладками.
+- **Restore удалённого = новая запись из истории.** Timeline показывает snapshot'ы с действием "Restore this version" — одна кнопка создаёт новую запись в target-таблице с контентом из snapshot'а + `IsDeleted=0`. Покрывает undo accidental delete и rollback к произвольной точке. Secret restore использует ту же ветку (encrypted blob перекладывается из `AuditLog` в `Secrets`).
+- **Optimistic locking при редактировании.** `Nodes`, `Variables`, `Secrets` — все содержат `ContentHash` column. UI-редактор шлёт `expectedHash` при save → `UPDATE ... WHERE Id=@id AND ContentHash=@expected`; rows affected = 0 → conflict modal (three-way diff, inspired by stdray.Obsidian ConflictSolverService).
+- **Diff в UI.** Текущая версия vs любой snapshot из `AuditLog` — текстовый diff на `RawContent`/`Value` (HOCON-aware syntax highlighting через Monaco diff-editor).
 
 ## 8. Дизайн API и маршрутизация
 - **URL-структура:** `GET /v1/conf/{path}`.

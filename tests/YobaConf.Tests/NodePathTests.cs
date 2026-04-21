@@ -48,4 +48,41 @@ public class NodePathTests
 	[Fact]
 	public void Equality_IsValueBased() =>
 		NodePath.ParseDb("a1/b2").Should().Be(NodePath.ParseDb("a1/b2"));
+
+	[Fact]
+	public void IsAncestorOf_ProperPrefixWithSlashBoundary_IsTrue() =>
+		NodePath.ParseDb("yobapub").IsAncestorOf(NodePath.ParseDb("yobapub/test")).Should().BeTrue();
+
+	[Fact]
+	public void IsAncestorOf_DeepDescendant_IsTrue() =>
+		NodePath.ParseDb("yobapub").IsAncestorOf(NodePath.ParseDb("yobapub/test/feature")).Should().BeTrue();
+
+	[Fact]
+	public void IsAncestorOf_Self_IsFalse() =>
+		NodePath.ParseDb("yobapub/test").IsAncestorOf(NodePath.ParseDb("yobapub/test")).Should().BeFalse();
+
+	[Fact]
+	public void IsAncestorOf_Sibling_IsFalse() =>
+		NodePath.ParseDb("yobapub/test").IsAncestorOf(NodePath.ParseDb("yobapub/dev")).Should().BeFalse();
+
+	// Prevents the "yobaproj/yobaapp" key from granting access to "yobaproj/yobaapplication" — spec §8.
+	[Fact]
+	public void IsAncestorOf_PrefixWithoutSegmentBoundary_IsFalse() =>
+		NodePath.ParseDb("yobaproj/yobaapp").IsAncestorOf(NodePath.ParseDb("yobaproj/yobaapplication")).Should().BeFalse();
+
+	[Fact]
+	public void IsAncestorOf_Ancestor_IsFalseOnReverseDirection() =>
+		NodePath.ParseDb("yobapub/test").IsAncestorOf(NodePath.ParseDb("yobapub")).Should().BeFalse();
+
+	[Fact]
+	public void Root_IsAncestorOfEveryNonRootPath() =>
+		NodePath.Root.IsAncestorOf(NodePath.ParseDb("anything")).Should().BeTrue();
+
+	[Fact]
+	public void Root_IsNotAncestorOfItself() =>
+		NodePath.Root.IsAncestorOf(NodePath.Root).Should().BeFalse();
+
+	[Fact]
+	public void IsDescendantOf_IsInverseOfIsAncestorOf() =>
+		NodePath.ParseDb("yobapub/test").IsDescendantOf(NodePath.ParseDb("yobapub")).Should().BeTrue();
 }

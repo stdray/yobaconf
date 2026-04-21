@@ -28,7 +28,7 @@ Snapshot — первичный инструмент, property-тесты пов
 - [ ] **Фаза A — dog-food ready.** API `GET /v1/conf/{path}` с Fallthrough и резолвингом переменных (без секретов, без истории), API-ключи со scoped `RootPath`, минимальный read-only UI (дерево + просмотр HOCON + результирующий JSON), bootstrap из `appsettings.json`. На этой фазе YobaConf уже хостит конфиги для других своих проектов.
     - [~] Доменные типы в Core: `NodePath` готов (slug-регex + `.`/`/` round-trip). Остаются: `HoconNode` (готов как record), `Variable`, `ApiKey`, `IConfigStore` (stub), `ResolveResult`.
     - [ ] `SqliteConfigStore` — linq2db-бэкенд, таблицы `Nodes`, `Variables`, `Secrets`, `ApiKeys`, `AuditLog` (spec §3). WAL mode. `Path` UNIQUE index; `(ScopePath, Key)` UNIQUE для Variables/Secrets; `TokenHash` UNIQUE для ApiKeys.
-    - [ ] Resolve pipeline (spec §4) как чистая функция `(NodePath, IConfigStoreSnapshot) → ResolveResult` — без HTTP, без auth. Fallthrough → сбор родителей → рендер variables в HOCON → склейка `variables + parent + ... + leaf` → единый `ParseString` (substitution резолвится at parse-time, см. decision-log 2026-04-21) → сериализация в JSON.
+    - [ ] Resolve pipeline (spec §4) как чистая функция `(NodePath, IConfigStoreSnapshot) → ResolveResult` — без HTTP, без auth. Fallthrough (routing, не merge) → подгрузка variables/secrets по ScopePath → резолвинг `include`-директив в best-match RawContent (validation: target must be proper ancestor; parse error иначе) → склейка `variables + included blocks + best-match RawContent` → единый `ParseString` (substitution резолвится at parse-time) → сериализация в JSON.
     - [ ] Snapshot-тесты по чек-листу ниже.
     - [ ] `GET /v1/conf/{path}` — парсит внешний `.`-путь в `NodePath`, гоняет pipeline, отдаёт JSON + ETag.
     - [ ] API-ключи scoped — `IApiKeyStore` + `ConfigApiKeyStore` (plaintext в `appsettings`, master-ключи; LiteDB-стор появится в Phase B). `X-YobaConf-ApiKey` header + `?apiKey=` query.
@@ -36,7 +36,7 @@ Snapshot — первичный инструмент, property-тесты пов
     - [ ] Минимальный read-only UI — Razor Pages: дерево узлов, просмотр HOCON, результирующий JSON. Tailwind + DaisyUI, `data-theme="dark"`. Cookie-auth с единственным админом из `appsettings`.
     - [ ] Self-observability — CLEF-клиент к YobaLog, выделенный workspace `yobaconf-ops` (spec §11). Рекурсия невозможна по конструкции (YobaLog не знает про YobaConf).
 
-- [ ] **Фаза B — редактирование.** CRUD по нодам в UI с Monaco, audit log (immutable history), soft delete, diff текущей версии с предыдущей.
+- [ ] **Фаза B — редактирование.** CRUD по нодам в UI с Monaco, audit log (immutable history), soft delete, diff текущей версии с предыдущей. **Optimistic locking** через `ContentHash` column на Nodes/Variables/Secrets: UPDATE WHERE Id AND ContentHash; rows=0 → conflict modal (three-way diff, inspired by stdray.Obsidian ConflictSolverService). **Unified timeline UI** (spec §7): история по path объединяет Nodes+Variables+Secrets+ApiKeys в одну ленту — пользователь не переключает вкладки по сущностям.
 - [ ] **Фаза C — секреты.** Variables & Secrets с AES-256, маскирование в UI (`******`), отдельный scope ключей для доступа к секретам. Мастер-ключ — env var, не в БД/конфиге.
 - [ ] **Фаза D — клиентские SDK.** .NET (`IConfigurationProvider`), Python (Pydantic source), TS/Bun.
 - [ ] **Фаза E — push для сверхнагрузок.** Экспорт собранного JSON в Redis/Consul/S3.
@@ -76,7 +76,7 @@ Snapshot — первичный инструмент, property-тесты пов
 - [x] **БД:** SQLite + linq2db (решено 2026-04-21, см. decision-log).
 - [x] **Workspaces поверх path-tree:** нет, paths сами по себе namespace (решено 2026-04-21).
 - [x] **Variables vs Secrets storage:** две отдельные таблицы, не единая с `IsSecret`-флагом (решено 2026-04-21).
-- [x] **Include-семантика:** только auto ancestor-merge, explicit `include` отложен (решено 2026-04-21).
+- [x] **Include-семантика:** explicit `include "target"` поддерживается в MVP; target — proper ancestor including ноды; sibling/descendant/cross-tree = parse error. Auto ancestor-merge убран. (Решено 2026-04-21; ранее в тот же день было принято обратное, см. decision-log "Include поддерживаем, не откладываем".)
 - [x] **Конкурентные правки в UI:** optimistic locking через `ContentHash` column + three-way merge modal (решено 2026-04-21).
 - [x] **Secret access control:** API-ключ на path даёт доступ к resolved JSON со всеми секретами; отдельной permission нет (решено 2026-04-21, `spec.md` §4).
 - [x] **ETag формула:** `first-16-hex-chars(sha256(rendered-json))`, strong (решено 2026-04-21, `spec.md` §4.6).
