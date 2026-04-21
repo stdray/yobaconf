@@ -26,8 +26,8 @@ Snapshot — первичный инструмент, property-тесты пов
     - [ ] Smoke-test с реальным dotnet restore — отложен до Phase A.0 solution skeleton (когда появится `.csproj` на кого повесить PackageReference).
 
 - [ ] **Фаза A — dog-food ready.** API `GET /v1/conf/{path}` с Fallthrough и резолвингом переменных (без секретов, без истории), API-ключи со scoped `RootPath`, минимальный read-only UI (дерево + просмотр HOCON + результирующий JSON), bootstrap из `appsettings.json`. На этой фазе YobaConf уже хостит конфиги для других своих проектов.
-    - [ ] Доменные типы в Core: `NodePath` (slug-валидация per-segment, spec §8 regex), `HoconNode`, `Variable`, `ApiKey`, `IConfigStore`, `ResolveResult`.
-    - [ ] `LiteDbConfigStore` — LiteDB-бэкенд, коллекции `Nodes`, `Variables`, `ApiKeys` (spec §3). Path-индекс уникальный.
+    - [~] Доменные типы в Core: `NodePath` готов (slug-регex + `.`/`/` round-trip). Остаются: `HoconNode` (готов как record), `Variable`, `ApiKey`, `IConfigStore` (stub), `ResolveResult`.
+    - [ ] `SqliteConfigStore` — linq2db-бэкенд, таблицы `Nodes`, `Variables`, `Secrets`, `ApiKeys`, `AuditLog` (spec §3). WAL mode. `Path` UNIQUE index; `(ScopePath, Key)` UNIQUE для Variables/Secrets; `TokenHash` UNIQUE для ApiKeys.
     - [ ] Resolve pipeline (spec §4) как чистая функция `(NodePath, IConfigStoreSnapshot) → ResolveResult` — без HTTP, без auth. Fallthrough → сбор родителей → рендер variables в HOCON → склейка `variables + parent + ... + leaf` → единый `ParseString` (substitution резолвится at parse-time, см. decision-log 2026-04-21) → сериализация в JSON.
     - [ ] Snapshot-тесты по чек-листу ниже.
     - [ ] `GET /v1/conf/{path}` — парсит внешний `.`-путь в `NodePath`, гоняет pipeline, отдаёт JSON + ETag.
@@ -73,7 +73,20 @@ Snapshot — первичный инструмент, property-тесты пов
 
 ## Открытые вопросы
 
-- [ ] **Циклические инклуды на уровне движка:** защита от `A → B → A` с понятной ошибкой; ограничение глубины. (Частично проверяется тестом в pre-Phase-A чеклисте; полная реализация — в Phase A после Hocon-гейта.)
-- [x] **Мастер-ключ AES** — переменная окружения, пробрасываемая через CI (GitHub Actions secret). Зафиксировано в `spec.md` §2.
-- [x] **Лог аудита** — immutable history, хранится всегда. Зафиксировано в `spec.md` §7.
-- [ ] **Клиентские SDK** — обёртки для .NET (`IConfigurationProvider`), Python (Pydantic source), TS/Bun. Phase D.
+- [x] **БД:** SQLite + linq2db (решено 2026-04-21, см. decision-log).
+- [x] **Workspaces поверх path-tree:** нет, paths сами по себе namespace (решено 2026-04-21).
+- [x] **Variables vs Secrets storage:** две отдельные таблицы, не единая с `IsSecret`-флагом (решено 2026-04-21).
+- [x] **Include-семантика:** только auto ancestor-merge, explicit `include` отложен (решено 2026-04-21).
+- [x] **Конкурентные правки в UI:** optimistic locking через `ContentHash` column + three-way merge modal (решено 2026-04-21).
+- [x] **Secret access control:** API-ключ на path даёт доступ к resolved JSON со всеми секретами; отдельной permission нет (решено 2026-04-21, `spec.md` §4).
+- [x] **ETag формула:** `first-16-hex-chars(sha256(rendered-json))`, strong (решено 2026-04-21, `spec.md` §4.6).
+- [x] **API-key token format:** ShortGuid (22 chars, 122 бита) + sha256 hash + 6-char prefix для UI — синхронно с yobalog (решено 2026-04-21, `spec.md` §2).
+- [x] **Восстановление soft-deleted:** через новую запись из `AuditLog` snapshot'а (решено 2026-04-21, `spec.md` §7).
+- [x] **Мастер-ключ AES** — env var `YOBACONF_MASTER_KEY` (`spec.md` §2).
+- [x] **Лог аудита** — immutable, хранится всегда (`spec.md` §7).
+
+Остаются:
+- [ ] **Циклические ссылки в HOCON substitutions:** `a = ${b}, b = ${a}` в одном тексте — ловится парсером? Нужна защита от глубокой рекурсии (DoS). Проверить тестом в Phase A.
+- [ ] **Клиентские SDK:** обёртки для .NET (`IConfigurationProvider`), Python (Pydantic source), TS/Bun. Phase D.
+- [ ] **Rate limiting:** не реализуем в MVP (удалено из §11 self-observability). Phase E polish.
+- [ ] **Perf target:** soft goal "p99 < 50ms resolve+serialize на 1k нод" — проверяется когда появится нагрузочный тест.

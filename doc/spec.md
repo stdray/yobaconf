@@ -11,51 +11,85 @@
     - **Для доставки (клиент):** чистый JSON (уже собранный, со всеми подстановками).
 
 ## 2. Технологический стек
-- **Платформа:** .NET 10 (высокая производительность, современные фичи C#).
-- **База данных:** LiteDB (NoSQL, хранение в BSON, база в одном файле — достаточно для целевого профиля нагрузки).
-- **Движок конфигов:** HOCON-парсер для .NET (конкретный пакет выбирается в Phase A.1 — Hocon.Net либо akka.net/hocon-cs, см. `plan.md`). AST + программный inject переменных для §4.5 resolve обязательны.
-- **Безопасность:** AES-256 для шифрования секретов в БД; API-ключи с ограниченным доступом (scoped API keys).
-- **Сериализация:** `System.Text.Json` (быстрая генерация JSON).
-- **Конфигурация самого сервиса:** `appsettings.json`. YobaConf **не может** конфигурироваться через YobaConf — иначе бутстрап-цикл. Мастер-ключ AES — переменная окружения / CI secret, не в `appsettings`.
-- **Логирование:** YobaConf пишет свои события (изменения нод, аудит, ошибки резолвинга, rate-limit rejects) в YobaLog через CLEF endpoint. Направление зависимости: **YobaConf → YobaLog**. Обратное направление запрещено (в YobaLog `spec.md` §1 зафиксировано: конфиг только из `appsettings.json`).
+- **Платформа:** .NET 10.
+- **База данных:** SQLite через `linq2db.SQLite.MS` (синхронно с yobalog — тот же стек, те же паттерны миграций, общий tooling опыт). Single-file `.db` на инстанс, WAL mode. Row-storage — выбор осознанный: модель rigid и flat, NoSQL-гибкости не использует (см. `decision-log.md` 2026-04-21 "SQLite + linq2db вместо LiteDB").
+- **Движок конфигов:** `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 (akkadotnet/HOCON, Apache-2.0). Phase A.1 HOCON-гейт закрыт (`decision-log.md` 2026-04-21). Transitive CVE на `System.Drawing.Common 4.7.0` запинена forward через CPM.
+- **Безопасность:** AES-256-GCM (authenticated encryption) для секретов в БД — шифротекст + IV + версия мастер-ключа (на случай ротации). Мастер-ключ — env var `YOBACONF_MASTER_KEY`, никогда в `appsettings.json` / БД. API-ключи: scoped `RootPath`, токен = ShortGuid (22 chars base64url от 128-bit Guid, 122 бита энтропии), в БД — `sha256(token)` hex + 6-char prefix для UI (тот же формат, что в yobalog).
+- **Сериализация:** `System.Text.Json`.
+- **Конфигурация самого сервиса:** `appsettings.json`. YobaConf **не может** конфигурироваться через YobaConf — бутстрап-цикл. Мастер-ключ AES — только env var / CI secret.
+- **Workspace-уровень отсутствует:** path-дерево — единственный namespace. Изоляция между проектами/командами — через API-ключи с `RootPath` на нужное поддерево. См. `decision-log.md` 2026-04-21 "Без workspaces в MVP".
+- **Логирование:** YobaConf пишет свои события (изменения нод, аудит, ошибки резолвинга) в YobaLog через CLEF endpoint. Направление зависимости: **YobaConf → YobaLog**. Обратное запрещено (YobaLog `spec.md` §1: конфиг только из `appsettings.json`).
 
-## 3. Модель данных (коллекции LiteDB)
+## 3. Модель данных (таблицы SQLite)
 
 ### Nodes (дерево конфигов)
-- `Path` (string, уникальный индекс): путь вида `projects/yoba/api/prod`.
-- `RawContent` (string): сырой текст в формате HOCON.
-- `UpdatedAt` (DateTime): дата изменения для формирования ETag и инвалидации кэша.
+- `Id` INTEGER PK.
+- `Path` TEXT UNIQUE NOT NULL — канонический путь вида `projects/yoba/api/prod` (валидация per-segment по regex §8).
+- `RawContent` TEXT NOT NULL — сырой HOCON.
+- `ContentHash` TEXT — `sha256(RawContent)` hex, используется для optimistic locking в UI-редакторе (см. §7 и `decision-log.md` 2026-04-21 "Optimistic locking через ContentHash").
+- `UpdatedAt` INTEGER — unix ms, участвует в ETag финального JSON и в истории.
+- `IsDeleted` INTEGER (0/1) — soft delete (§7). Помеченные ноды пропускаются Fallthrough'ом.
 
-### Variables & Secrets (переменные и секреты)
-- `Key` (string): имя переменной, например `db_host` или `api_key`.
-- `Value` (string): открытый текст для переменных, зашифрованный — для секретов.
-- `ScopePath` (string): уровень пути, на котором видна эта переменная (например, `/projects/yoba`).
-- `IsSecret` (bool): флаг для дешифрования и маскировки в интерфейсе.
+### Variables (переменные) и Secrets (секреты) — две отдельные таблицы
+**Разделение осознанное** — обоснование в `decision-log.md` 2026-04-21 "Variables и Secrets — отдельные таблицы". Коротко: разная schema (plaintext vs encrypted blob + IV + key-version), разный audit-path, type-safety на уровне DAO.
 
-### API Keys (ключи доступа)
-- `KeyHash` (string): хеш API-ключа.
-- `RootPath` (string): граница доступа (ключ для `projects/yoba/` не увидит ничего из других папок).
-- `Description` (string): описание, например "Ключ для мобильной разработки".
+`Variables`:
+- `Id` INTEGER PK.
+- `Key` TEXT — имя переменной (`db_host`).
+- `Value` TEXT — открытый текст.
+- `ScopePath` TEXT — путь, на котором видна переменная; наследуется потомками по тем же правилам, что RawContent (§4).
+- `ContentHash` TEXT — sha256(Value) для optimistic lock.
+- UNIQUE (`ScopePath`, `Key`).
 
-### AuditLog (см. §8)
-- `NodePath` (string): путь изменённой ноды.
-- `OldRawContent` (string): предыдущий HOCON (для секретов — зашифрованный).
-- `ChangedAt` (DateTime): timestamp изменения.
-- `UserId` (string): автор изменения.
+`Secrets`:
+- `Id` INTEGER PK.
+- `Key` TEXT.
+- `EncryptedValue` BLOB — AES-256-GCM шифротекст от plaintext под мастер-ключом.
+- `Iv` BLOB — initialization vector (12 байт для GCM).
+- `AuthTag` BLOB — GCM authentication tag (16 байт).
+- `KeyVersion` TEXT — идентификатор версии мастер-ключа, которым зашифровано (для graceful rotation).
+- `ScopePath` TEXT — те же правила видимости, что у Variables.
+- `ContentHash` TEXT — sha256(EncryptedValue) для optimistic lock.
+- UNIQUE (`ScopePath`, `Key`).
+
+### ApiKeys (ключи доступа)
+- `Id` INTEGER PK.
+- `TokenHash` TEXT — `sha256(token)` hex от выданного токена.
+- `TokenPrefix` TEXT — первые 6 символов plaintext-токена, для идентификации в UI.
+- `RootPath` TEXT — граница доступа; ключ на `yobaproj/yobaapp` видит `yobaproj/yobaapp/dev` и любого потомка, не видит ничего за пределами.
+- `Description` TEXT — free-form человекочитаемое описание.
+- `CreatedAt` INTEGER — unix ms.
+
+Токен плейнтекст = ShortGuid (22 chars base64url от Guid.NewGuid, 122 бита). Показывается пользователю **один раз** при создании; потом в UI доступен только `TokenPrefix` для идентификации.
+
+### AuditLog (immutable history, §7)
+- `Id` INTEGER PK.
+- `Kind` TEXT — `'node'` / `'variable'` / `'secret'` / `'apikey'`.
+- `TargetId` INTEGER — ID строки в соответствующей таблице.
+- `OldContent` TEXT | BLOB — предыдущее значение. Для `Kind = 'secret'` — encrypted blob + IV + AuthTag + KeyVersion (НИКОГДА plaintext).
+- `ChangedAt` INTEGER — unix ms.
+- `UserId` TEXT — автор изменения (для API-ключ-driven изменений = `TokenPrefix` ключа).
 
 ## 4. Бизнес-логика (конвейер обработки)
-1. **Запрос.** Клиент запрашивает `path` и передаёт `API Key`.
-2. **Авторизация.** Проверка ключа и того, что запрошенный `path` входит в `RootPath` ключа.
-3. **Поиск.**
-    - Поиск лучшего совпадения узла (алгоритм **Fallthrough**).
-    - Сбор всех родительских узлов до корня (для обработки `include`).
-4. **Сборка.**
-    - Подгрузка переменных и секретов, актуальных для данного пути (расшифровка секретов по мастер-ключу из env).
-    - Рендер variables в HOCON-текст.
-    - Конкатенация: `variables-hocon` + все родительские `RawContent` от root до leaf.
-    - Парсинг единого текста через `HoconConfigurationFactory.ParseString` — substitutions резолвятся в этом же шаге (см. `decision-log.md` 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time"). `.WithFallback()` используется только для merge между независимыми источниками (напр. pre-parsed defaults), не для inject переменных.
-5. **Сериализация.** Обход HOCON-дерева → `System.Text.Json`. HOCON-специфичная запись ключей (`a.b.c = 1` → вложенные объекты) нормализуется.
-6. **Ответ.** Возврат `200 OK` с JSON или `304 Not Modified` (проверка ETag).
+1. **Запрос.** Клиент шлёт `GET /v1/conf/{path}` + API-ключ.
+2. **Авторизация (до любого lookup'а).** Валидация ключа + проверка, что запрошенный `path` — потомок `RootPath` ключа (посегментное сравнение, не `StartsWith`, см. §8). **403 раньше 404**: если ключ не даёт доступа — отвечаем `403` без намёка на существование ноды. Только когда доступ разрешён, идём в шаг 3.
+3. **Поиск (ancestor chain для наследования).**
+    - Fallthrough: ищем ближайшую существующую ноду от `path` вверх до корня, пропуская `IsDeleted=1`. Если ни одна не найдена — `404`.
+    - Собираем весь ancestor chain (от root до best-match leaf), тоже пропуская soft-deleted ноды.
+4. **Сборка HOCON.**
+    - Подгрузка Variables + Secrets, чей `ScopePath` — ancestor текущего `path` (включая сам `path`). Ближайший scope перебивает дальний при коллизии Key.
+    - Дешифровка Secrets по мастер-ключу (env) с учётом `KeyVersion`.
+    - Рендер variables+secrets в HOCON-фрагмент (`key = "value"` на строку).
+    - Конкатенация: `variables-hocon` + `parent-N RawContent` + ... + `parent-1 RawContent` + `leaf RawContent` (root → leaf).
+    - Единый `HoconConfigurationFactory.ParseString(...)`. Substitutions резолвятся at parse-time (см. `decision-log.md` 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time").
+    - **Ancestor-only inheritance:** MVP не поддерживает explicit `include`-директивы в `RawContent`; наследование — только через автоматический ancestor merge. Если `include` встречается в тексте — parse error. См. `decision-log.md` 2026-04-21 "Include-семантика".
+5. **Сериализация.** HOCON-дерево → `System.Text.Json`. Объекты, строки, числа, bool, массивы — по прямому маппингу. HOCON-специфичная запись `a.b.c = 1` нормализуется в вложенные объекты.
+6. **ETag и ответ.**
+    - `ETag = first-16-hex-chars(sha256(rendered-json-bytes))`, strong ETag (без `W/` префикса).
+    - Если `If-None-Match` header совпадает — `304 Not Modified`, пустое тело.
+    - Иначе — `200 OK` + JSON + `ETag` header.
+
+**Secret access model:** один scoped API-ключ даёт доступ и к переменным, и к секретам пути. Нет отдельной "read-secret" permission. Логика: раннер-клиент, которому достаётся конфиг, обязан знать все значения, чтобы работать. UI-админки маскирует значения секретов независимо (`******` + explicit reveal), но это UI-уровень, не API.
 
 **Инвариант:** один и тот же вход (`path` + API key + состояние БД на момент запроса) обязан давать ровно один JSON-результат. Покрывается snapshot-тестами (см. `plan.md`).
 
@@ -66,15 +100,17 @@
 - **Хранилище (Vault).** Управление секретами с маскировкой значений (`******`).
 
 ## 6. Масштабируемость и отказоустойчивость
-- **Без кэша на старте.** Сборка "на лету" (миллисекунды для LiteDB).
-- **Поддержка ETag.** Использование хеша финальной строки для экономии трафика.
+- **Без кэша на старте.** Сборка "на лету" — SQLite indexed lookup по `Path` + in-memory merge HOCON. Soft target: p99 resolve+serialize < 50ms на дереве в 1k нод (меряем когда появится нагрузочный тест).
+- **Поддержка ETag.** Финальный JSON → sha256 → 16-hex-chars strong ETag (§4.6). Клиент шлёт `If-None-Match` → `304` без тела.
 - **Путь развития.** Экспорт ("push") готовых JSON в Redis, Consul или S3 для сверхвысоких нагрузок (Phase E).
 
 ## 7. Версионирование и аудит
-- **Immutable history.** При любом изменении `RawContent` или `Value` (для секретов) старая копия сохраняется в таблицу `AuditLog` с меткой времени и ID пользователя.
-- **Секреты в аудите.** В истории аудита значения секретов **обязательно** хранятся в зашифрованном виде.
-- **Мягкое удаление (soft delete).** Ноды не удаляются физически, а помечаются флагом `IsDeleted`. Позволяет восстановить случайно удалённую ветку дерева.
-- **Сравнение (diff).** В UI функция сравнения текущей версии с любой предыдущей из истории (текстовый diff).
+- **Immutable history через `AuditLog`.** Любое изменение `Nodes.RawContent`, `Variables.Value`, `Secrets.EncryptedValue`, `ApiKeys.*` кладёт предыдущее значение в `AuditLog` (§3) с `ChangedAt` + `UserId`. Ретенция — **вечно**, без TTL (в отличие от логов в yobalog).
+- **Секреты в аудите всегда encrypted.** Type-safe: `AuditLog.Kind='secret'` ветвь работает с blob + IV + AuthTag + KeyVersion, никогда с plaintext. Мастер-ключ для дешифровки старого snapshot'а — текущий env var (поэтому `KeyVersion` в `AuditLog` нужен — ротация ключа не ломает историю).
+- **Soft delete.** Ноды помечаются `IsDeleted=1`, не удаляются физически. Fallthrough (§4) их пропускает — клиент получает результат, как если бы ноды не существовало. То же для Variables/Secrets (поле добавляется при первой реализации).
+- **Restore удалённого = новая запись из истории.** В UI на странице ноды/переменной видна timeline `AuditLog`. "Восстановить" = создать новую запись с `RawContent`/`Value` из выбранного snapshot'а + `IsDeleted=0`. Механизм покрывает и undo accidental delete, и rollback к произвольной точке. Secret restore использует ту же ветку — encrypted blob перекладывается из `AuditLog` в `Secrets`.
+- **Optimistic locking при редактировании.** Каждая таблица с пользовательским контентом (`Nodes`, `Variables`, `Secrets`) имеет `ContentHash` column. UI-редактор шлёт `expectedHash` при save → `UPDATE ... WHERE Id=@id AND ContentHash=@expected`; rows affected = 0 → conflict modal (three-way diff, inspired by stdray.Obsidian ConflictSolverService).
+- **Diff в UI.** Текущая версия vs любой snapshot из `AuditLog` — текстовый diff на `RawContent` (HOCON-aware syntax highlighting через Monaco diff-editor).
 
 ## 8. Дизайн API и маршрутизация
 - **URL-структура:** `GET /v1/conf/{path}`.
@@ -103,7 +139,7 @@
 - **Monaco.** Подключается как npm-пакет (`import * as monaco from 'monaco-editor'`). Воркеры language-services билдятся как отдельные entry-points, URL-ы раздаются через `self.MonacoEnvironment.getWorkerUrl`. Для HOCON нужен кастомный TextMate grammar.
 
 ## 11. Self-observability
-- Все server-side события (изменения нод, доступ по API-ключам, ошибки резолвинга, `403` по граничным путям, rate-limit rejects) YobaConf пишет в YobaLog через CLEF endpoint.
+- Все server-side события (изменения нод, доступ по API-ключам, ошибки резолвинга, `403` по граничным путям) YobaConf пишет в YobaLog через CLEF endpoint. Rate-limiting в MVP не реализован (Phase E).
 - API-ключ YobaConf → YobaLog хранится в `appsettings.json` самого YobaConf (**не** в YobaConf-ноде — иначе бутстрап-цикл, см. §2).
 - Отдельный workspace в YobaLog под YobaConf (например, `$system/yobaconf` или выделенный `yobaconf-ops`) — не смешиваем с user workspaces.
 - Рекурсия невозможна по конструкции: YobaLog не зависит от YobaConf, события YobaConf не могут триггерить обращение к YobaConf при записи.

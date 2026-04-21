@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-04-21 — SQLite + linq2db вместо LiteDB
+
+**Решение:** YobaConf хранит данные в SQLite через `linq2db.SQLite.MS` (та же версия, что в yobalog). Single `.db` file, WAL mode. Миграции — через linq2db (позже) или руками на старте Phase A (схема = 4 таблицы: Nodes, Variables, Secrets, ApiKeys + AuditLog). Транзитивная CVE на `System.Drawing.Common 4.7.0` уже запинена forward через CPM — ничего дополнительно не ломается.
+
+**Причина:**
+- Модель yobaconf rigid и row-shaped: Nodes/Variables/Secrets/ApiKeys/AuditLog — плоские строки с фиксированными полями. NoSQL-гибкость LiteDB здесь не используется — LiteDB по факту играет роль row-store через document-API.
+- Синхронно с yobalog: тот же стек (`linq2db.SQLite.MS 5.4.1`), те же паттерны миграций, общий tooling опыт (sqlite CLI, DB Browser for SQLite, Rider viewers).
+- AuditLog insert-heavy и растёт вечно — SQLite VACUUM / WAL checkpointing / бэкап-story хорошо документированы; LiteDB здесь слабее.
+- FTS5 на будущее: "найти все ноды, ссылающиеся на `${db_host}`" — одна строка в схеме, если вдруг понадобится.
+
+**Откатили:** LiteDB как выбор из изначальной спеки. Причина отката — rigid-data не использует гибкость document-store, а yobalog уже sqlite-based: расхождение БД-стеков = tax на каждом bump'е.
+
+---
+
+## 2026-04-21 — Без workspaces в MVP: иерархические пути сами по себе namespace
+
+**Решение:** YobaConf не вводит понятие workspace поверх path-tree. Дерево путей — единственный namespace. Изоляция между проектами/командами — через API-ключи с `RootPath` на нужное поддерево.
+
+**Причина:**
+- Path-дерево уже даёт всё, что даёт workspace в yobalog: per-tenant изоляция через scoped ключи, independent config trees. Добавлять ещё один уровень (workspace/path) = избыточная вложенность при тех же capabilities.
+- YAGNI: yobaconf стартует single-user / self-hosted. Multi-tenant истории нет на горизонте. Если когда-нибудь возникнет — миграция тривиальна: все существующие пути префиксятся workspace-id'ом, старые API-ключи rewritе'ятся автоматически.
+- Меньше API surface: `/v1/conf/{path}` vs `/v1/conf/{workspace}/{path}`; UI-дерево проще.
+
+**Откатили:** соблазн скопировать yobalog-структуру 1-в-1 ("workspace поверх всего") для симметрии между проектами. Симметрия кажущаяся: в yobalog workspace нужен, потому что логи разных проектов требуют физической изоляции (разные `.db`, разные retention). В yobaconf логическое разделение через paths + scoped keys работает без физической раздельности.
+
+---
+
+## 2026-04-21 — Variables и Secrets — отдельные таблицы, не общий column с `IsSecret`-флагом
+
+**Решение:** `Variables (Key, Value, ScopePath, ContentHash)` и `Secrets (Key, EncryptedValue, Iv, AuthTag, KeyVersion, ScopePath, ContentHash)` — разные таблицы в SQLite. В API §4 pipeline они унифицированы в общий `ResolvedVariable` список для HOCON-движка, но хранение и audit-пути раздельные.
+
+**Причина:**
+- Type safety: секрет в единой таблице с `IsSecret`-флагом — семантическая мина. Одна забытая ветка `if (row.IsSecret) Decrypt(...)` = plaintext-утечка. Разные таблицы = тип на уровне DAO физически разделяет code paths.
+- Schema физически разная: `Value TEXT` vs `EncryptedValue BLOB + Iv BLOB + AuthTag BLOB + KeyVersion TEXT`.
+- AuditLog-инвариант "секреты в аудите ВСЕГДА encrypted" (§7) — проще enforce'ить через отдельную `AuditLog.Kind='secret'` ветку с blob-типизацией, чем условной шифровкой в общей ветке.
+- UI: Variables показываются plaintext, Secrets — `******` + reveal. Разные view-слои, разные data-testid, разные permission-checks (в будущем).
+
+**Откатили:** single-table + flag (проще в схеме, экономит JOIN). Type safety важнее минимализма при 2 таблицах — схема всё равно тривиальна.
+
+---
+
+## 2026-04-21 — Include-семантика: только автоматическое наследование ancestors, explicit `include` отложен
+
+**Решение:** В MVP Phase A единственный механизм merge — автоматический обход ancestor chain (spec §1 иерархическое наследование, §4.3 pipeline). Явные HOCON `include`-директивы в `RawContent` не поддерживаются: если встречаются — эмитится понятная parse-ошибка. Это означает:
+- Правило из примера пользователя ("test.hocon может включать logger-base и base, но не dev") реализуется через auto-merge (ancestor chain уже мержится — dev не ancestor для test).
+- Cross-tree references (siblings, cousins, other subtrees) невозможны вообще.
+
+**Причина:**
+- Explicit `include` = один из двух вариантов сложности: (1) произвольный include любой ноды → нужны cycle detection + security checks; (2) ancestor-restricted include → функционально дублирует автоматическое наследование.
+- Use case для explicit include не зафиксирован: ни один пример из обсуждения (logger-base для всех, bot-specific overrides, yobapub-test) не требует explicit поверх auto-merge.
+- YAGNI: легко добавить позже, если появится сценарий "include sibling из related subtree".
+
+**Откатили:** HOCON-native `include "path"` syntax из первоначальной формулировки §4 ("сбор всех родительских узлов до корня для обработки include"). §4 переписан: auto ancestor-merge, никаких `include`-директив.
+
+---
+
+## 2026-04-21 — Optimistic locking при редактировании через `ContentHash` column
+
+**Решение:** `Nodes`, `Variables`, `Secrets` имеют column `ContentHash` (sha256 hex от `RawContent` / `Value` / `EncryptedValue` соответственно). UI-редактор при save шлёт `expectedHash` вместе с новым значением; серверный UPDATE: `UPDATE ... SET ... WHERE Id = @id AND ContentHash = @expected`. Если rows affected = 0 → конфликт (параллельное редактирование), UI показывает three-way diff модалку (inspired by stdray.Obsidian ConflictSolverService — см. `D:\prj\github\stdray\stdray.Obsidian\stdray.Obsidian\ConflictResolution\ConflictSolverService.cs`).
+
+**Причина:**
+- Pessimistic lock (transaction/lease held during edit) плохо масштабируется и ломает UX: пользователь закрыл таб без "cancel" → lease застой → нужен cleanup job.
+- sha256 уже вычисляется для ETag (§4.6); сохранить в row — бесплатно.
+- User flow "во время твоего редактирования кто-то поменял файл — хочешь смержить автоматически или вручную?" — знаком по Obsidian-плагину автора, UX уже продуман.
+
+**Откатили:** pessimistic lock. Three-way merge UI для конфликтов — не отдельный продукт, а переиспользование существующего ConflictSolverService-паттерна.
+
+---
+
 ## 2026-04-21 — Hocon 2.0.4 резолвит substitutions at parse-time, а не после merge — §4.5 подстраивается под это
 
 **Решение:** первые unit-тесты показали, что `HoconConfigurationFactory.ParseString(text)` вызывает resolve substitutions прямо внутри парсера. Required `${var}`, у которой нет значения в **том же тексте**, бросает `HoconParserException: Unresolved substitution` — `.WithFallback(...)` поверх уже спарсенных Config'ов substitution не докидывает. Из этого следуют два работающих паттерна inject переменных, которые §4.5 обязан использовать:

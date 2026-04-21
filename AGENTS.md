@@ -19,8 +19,8 @@ When editing: spec changes go to `spec.md`, progress updates to `plan.md`, and a
 ## Target stack (planned, not yet scaffolded)
 
 - .NET 10 monolith, Razor Pages SSR + htmx (+ jQuery, optional Alpine.js).
-- LiteDB as the single-file NoSQL store for `Nodes`, `Variables`, `ApiKeys`, `AuditLog`.
-- HOCON as the edit format; JSON as the delivery format. Parser chosen in Phase A.1 gate (Hocon.Net / Akka.NET hocon-cs / alternative). Must support `include`, `.WithFallback()`, programmatic variable injection, `.Resolve()` — whichever package fails any of those falls out at the gate.
+- SQLite via `linq2db.SQLite.MS` as the single-file row store for `Nodes`, `Variables`, `Secrets`, `ApiKeys`, `AuditLog`. Same stack as yobalog by design — see `decision-log.md` 2026-04-21 "SQLite + linq2db вместо LiteDB".
+- HOCON as the edit format; JSON as the delivery format. Parser = `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 (akkadotnet/HOCON). Phase A.1 gate closed 2026-04-21. **Substitution resolves at parse-time**, not after `.WithFallback` — see pipeline §4 in spec.
 - AES-256 for secret values at rest. Master key — environment variable (`YOBACONF_MASTER_KEY`), never in `appsettings.json` or in the DB.
 - Monaco Editor (loaded as an npm package) with a custom TextMate grammar for HOCON syntax highlighting.
 - Frontend build: TypeScript + Tailwind + Monaco via `bun` (not npm+node). `package.json` lives next to `.csproj`; Release builds invoke `bun run build` from an MSBuild target.
@@ -31,6 +31,10 @@ When editing: spec changes go to `spec.md`, progress updates to `plan.md`, and a
 - **No YobaConf self-config.** YobaConf configures itself from `appsettings.json` only. Do not read bootstrap settings from a YobaConf node (`$system/yobaconf` or otherwise) — it creates a bootstrap cycle. Master AES key is an environment variable.
 - **No YobaLog → YobaConf dependency.** Events flow YobaConf → YobaLog via CLEF only. YobaLog's own config is `appsettings.json` (fixed in its own spec), so the reverse dependency is impossible by construction — don't accidentally add it.
 - **Secrets in the audit log are always encrypted.** `spec.md` §7. Utility test: grep the `.db` file after writing a secret; plaintext must not be there.
+- **Variables and Secrets live in separate tables.** Not one table with an `IsSecret` flag. The split is type-safety — a forgotten `if (row.IsSecret) decrypt(...)` branch in a unified table would leak plaintext. See `decision-log.md` 2026-04-21.
+- **No workspace concept.** Hierarchical paths ARE the namespace. Isolation between tenants/projects = scoped API keys on `RootPath`. If you feel the urge to add `/v1/conf/{workspace}/{path}` for "symmetry with yobalog" — don't. See `decision-log.md` 2026-04-21 "Без workspaces в MVP".
+- **No explicit HOCON `include` in MVP.** Ancestor chain is auto-merged (spec §4.3). If a node's `RawContent` contains an `include` directive — parse error. Feature deferred until a use case emerges. See `decision-log.md` 2026-04-21 "Include-семантика".
+- **403 before 404.** Authorization check runs before node lookup. A key without access to `path` gets `403` whether or not the node exists — no existence leak.
 - **Node-name slug regex `^[a-z0-9][a-z0-9-]{1,39}$`.** Dot is the path separator in URLs — forbidden inside a segment. `$`-prefix reserved for system nodes (`$system`, `$bootstrap`). Matches YobaLog's workspace-id regex exactly.
 - **API-key scope = segment-wise prefix, not substring.** A key scoped to `yobaproj.yobaapp` must let through `yobaproj.yobaapp.dev` and must reject `yobaproj.yobaapplication`. Compare after splitting on `.`, never with `StartsWith` on the raw string.
 - **Localization from day one.** All user-facing strings go through `IStringLocalizer`. No hardcoded strings in Razor/code. While the i18n scaffold isn't built, **all user-facing strings are literal English ASCII** — the CI will have a non-ASCII check over `ts/` and `Pages/` that fails the build on Cyrillic or other non-ASCII chars in those files. Comments in `.cs` under `src/YobaConf.Core` and `tests/` are exempt.
