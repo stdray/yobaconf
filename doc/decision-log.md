@@ -45,27 +45,30 @@
 
 ---
 
-## 2026-04-21 — Include поддерживаем, не откладываем: explicit merge, auto ancestor-merge убираем (переворот ранее принятого)
+## 2026-04-21 — Include-семантика финализирована: каждый `.hocon` = отдельная нода, scope `dir(target) ancestor-or-equal dir(including)`, циклы runtime-детектятся
 
-**Решение:** Поддерживаем explicit `include "ancestor-path"` в `RawContent` с самого MVP Phase A. Target include-директивы должен быть **proper ancestor** включающей ноды по path — sibling/descendant/cross-tree include = parse error. Автоматическое наследование ancestor-chain из spec §1 **убирается**: нода возвращает ровно тот контент, который в ней записан, плюс явно заинклуженные блоки. Fallthrough (spec §1, §4.3) остаётся как routing-механика ("несуществующий path → ближайший ancestor"), но возвращает только один best-match узел без автомержа.
+**Решение (финальное, после уточнения модели):** в ментальной модели каждый `.hocon`-файл становится отдельной нодой на пути `dir-segments/filename-without-ext`. Директории сами по себе нодами не являются, если в них не создан физический `RawContent`. Правило `include "absolute-path"`:
+- `dir(target)` (target path без последнего сегмента) должен быть **ancestor-or-equal** `dir(including-node)`.
+- Это разрешает: ancestors (любые предки в директорном смысле), siblings в той же директории (`project-a/test/service1` включает `project-a/test/service2`).
+- Запрещает: descendants, sibling-субдиректории (`project-a/test/*` не видит `project-a/dev/*`), self-include.
+- Относительные пути (`../foo`) в MVP не поддерживаются — только абсолютные от корня.
+- **Циклы возможны** (мутуальные sibling-includes) — runtime detection через DFS с `HashSet<NodePath> visited`; нарушение → `CyclicIncludeException` с цепочкой путей.
 
-**Причина (возражение пользователя к предыдущему решению):**
-- Auto-merge неявен: автор test.hocon получает logger-base в результирующем JSON, даже если не хотел — у него нет способа "отказаться от наследования". Explicit include = pull model, автор сам решает.
-- Предсказуемость: контент ноды = ровно то, что видно в редакторе (плюс явные include). Никакой скрытой магии из родителей — проще отлаживать, проще ревьюить.
-- Явность зависимости в коде: `include "yobapub"` в test.hocon самодокументирует, откуда берутся defaults. При auto-merge эта связь нигде не записана — нужно держать в голове структуру дерева.
-- Ancestor-restriction защищает от циклов по конструкции (ссылки только вверх) и от cross-tree leak (нельзя увести чужое поддерево).
+Резолвинг — **preprocess-стадия перед HOCON parse**, не через `ConfigResolver` callback пакета Hocon: native callback не получает контекст "кто включает", из-за чего scope-валидация и cycle-detection на его API не выражаются чисто. Своя DFS-обёртка раскрывает все `include`-директивы в плоский HOCON-текст, затем `ParseString` на плоском тексте.
 
-**Откатили:** "Include-семантика: только auto ancestor-merge, explicit отложен" (то же число, раньше сегодня). Переворот после возражения пользователя: "я предполагал, что пользователь руками всегда будет включать нужные блоки, чтобы никакого неявного поведения и случайного засорения конфига". Аргумент принят.
+**Причина текущей формулировки (после возражений пользователя):**
+- Первое решение (auto ancestor-merge, без explicit include): отвергнуто — неявное поведение, автор не может опт-аутнуться.
+- Второе решение (explicit include только ancestors-in-path): отвергнуто — реальная ментальная модель пользователя = filesystem-like с несколькими файлами в директории, где service1 и service2 как siblings должны мочь включать друг друга. Строгое "ancestors-only" (где sibling-include запрещён) ломает этот паттерн.
+- Третье (финальное): правило "dir ancestor-or-equal" разрешает siblings в той же директории — естественно для filesystem-конвенции — и закрывает use case. Цена: runtime cycle detection, но это стандартная задача.
 
-**Открытый вопрос (вынесен в чат):** как мапятся файлы из filesystem-drawing пользователя на path'ы YobaConf — logger-base.hocon это root-node content (path="") или отдельный sibling-node (path="logger-base")? Первое делает правило "only ancestors" чистым; второе требует дополнительного исключения для root-level shared nodes. Ждём подтверждение, логика резолвера зависит от ответа.
+**Rejected alternatives:**
+- **"Virtual env-view" (неявное `/project-a/test/service1` как merge `/project-a/service1` с variables из `/project-a/test/`):** отложено. Паттерн элегантен для env-overlay, но вводит implicit routing rule ("последний сегмент URL ищется в ancestor-директориях"), противоречащий принципу явности. Тот же result выражается explicit-нодами: `project-a/service1-base` + `project-a/test/service1` с `include "project-a/service1-base"`. Больше букв, меньше магии. Если use case "одна и та же конфигурация для 10 окружений с минимальными различиями" станет felt pain — добавим как отдельную template-фичу без перемоделирования routing.
 
----
+**Откатили:**
+- "Include-семантика: только auto ancestor-merge, explicit отложен" (раньше сегодня) → пользователь обосновал явный pull-model.
+- "Explicit include только для proper ancestors" (тоже сегодня) → неверная модель дерева: sibling-includes нужны для filesystem-подобной организации.
 
-## 2026-04-21 — ~~Include-семантика: только автоматическое наследование ancestors, explicit `include` отложен~~ (переработано, см. выше)
-
-**Решение:** ~~В MVP Phase A единственный механизм merge — автоматический обход ancestor chain...~~
-
-**SUPERSEDED 2026-04-21** записью "Include поддерживаем, не откладываем" (выше). Оставлена как исторический контекст — решение существовало около часа между двумя обсуждениями, не попало в код.
+**Источники (для истории):** обсуждение 2026-04-21 в чате по архитектуре, конкретно про пример с `project-a/logger.hocon`, `service1-base.hocon`, `service2-base.hocon` и потенциальные циклы между service1.hocon ↔ service2.hocon.
 
 ---
 

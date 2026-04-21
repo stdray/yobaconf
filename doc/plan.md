@@ -28,7 +28,7 @@ Snapshot — первичный инструмент, property-тесты пов
 - [ ] **Фаза A — dog-food ready.** API `GET /v1/conf/{path}` с Fallthrough и резолвингом переменных (без секретов, без истории), API-ключи со scoped `RootPath`, минимальный read-only UI (дерево + просмотр HOCON + результирующий JSON), bootstrap из `appsettings.json`. На этой фазе YobaConf уже хостит конфиги для других своих проектов.
     - [~] Доменные типы в Core: `NodePath` готов (slug-регex + `.`/`/` round-trip). Остаются: `HoconNode` (готов как record), `Variable`, `ApiKey`, `IConfigStore` (stub), `ResolveResult`.
     - [ ] `SqliteConfigStore` — linq2db-бэкенд, таблицы `Nodes`, `Variables`, `Secrets`, `ApiKeys`, `AuditLog` (spec §3). WAL mode. `Path` UNIQUE index; `(ScopePath, Key)` UNIQUE для Variables/Secrets; `TokenHash` UNIQUE для ApiKeys.
-    - [ ] Resolve pipeline (spec §4) как чистая функция `(NodePath, IConfigStoreSnapshot) → ResolveResult` — без HTTP, без auth. Fallthrough (routing, не merge) → подгрузка variables/secrets по ScopePath → резолвинг `include`-директив в best-match RawContent (validation: target must be proper ancestor; parse error иначе) → склейка `variables + included blocks + best-match RawContent` → единый `ParseString` (substitution резолвится at parse-time) → сериализация в JSON.
+    - [ ] Resolve pipeline (spec §4) как чистая функция `(NodePath, IConfigStoreSnapshot) → ResolveResult` — без HTTP, без auth. Fallthrough (routing, не merge) → подгрузка variables/secrets по ScopePath (ancestor-or-equal запрошенного path, не best-match) → **include preprocessor с DFS+cycle detection** (свой, не HOCON callback): для каждого `include "abs-path"` проверка `dir(target) ancestor-or-equal dir(including)`, check visited → `CyclicIncludeException`, раскрытие → плоский текст → склейка `variables-hocon + flat-hocon` → единый `ParseString` (substitution at parse-time) → сериализация в JSON.
     - [ ] Snapshot-тесты по чек-листу ниже.
     - [ ] `GET /v1/conf/{path}` — парсит внешний `.`-путь в `NodePath`, гоняет pipeline, отдаёт JSON + ETag.
     - [ ] API-ключи scoped — `IApiKeyStore` + `ConfigApiKeyStore` (plaintext в `appsettings`, master-ключи; LiteDB-стор появится в Phase B). `X-YobaConf-ApiKey` header + `?apiKey=` query.
@@ -47,7 +47,8 @@ Snapshot — первичный инструмент, property-тесты пов
 - [x] **Fallthrough:** `FallthroughTests.cs` — exact hit, missing leaf → ancestor, missing subtree → root-level, no ancestor → null, ancestor chain root-to-leaf ordering, skipped middle nodes. 6 тестов.
 - [x] **`NodePath` валидация slug:** `NodePathTests.cs` — валидные сегменты, round-trip между `.`- и `/`-нотацией, отклонение прописных букв / underscore / ведущий-тире / коротких сегментов / пробелов / точек внутри сегмента, `$`-системный префикс, `Parent` walk, `Root == default`, value-equality. 15 тестов.
 - [x] **HOCON merge smoke** (Phase A.1 follow-up): `HoconMergeTests.cs` — `.WithFallback` скаляры, deep objects, substitution через concat-before-parse, optional `${?var}`, required substitution бросает at parse-time. 5 тестов.
-- [ ] **Циклические инклуды:** `A → B → A` ловится с понятной ошибкой; ограничение глубины.
+- [ ] **Циклические инклуды между нодами:** `A → B → A` (мутуальные sibling-includes) ловится с понятной ошибкой, включает цепочку путей. Реализуется в preprocess-стадии через `HashSet<NodePath> visited`. Property test: произвольный цикл произвольной длины детектится.
+- [ ] **Include scope violation:** `include` target вне разрешённой области (descendant, sibling-subtree, self) → понятная ошибка. Permutation tests на all-vs-all комбинациях 4-нодного дерева.
 - [ ] **API-ключ scope (property test):** ключ на `yobaproj.yobaapp` видит `yobaproj.yobaapp.dev`, не видит `yobaproj.otherapp`; граничные случаи (exact match на `RootPath`, префикс-collision типа `yobaproj.yobaapplication` не должен проходить).
 - [ ] **ETag:** одинаковый вход → одинаковый хеш; `304 Not Modified` корректно; изменение любого включённого фрагмента инвалидирует.
 - [ ] **HOCON include-resolution:** инклуд несуществующего фрагмента — ошибка; защита от бесконечной глубины (DoS).
@@ -76,7 +77,7 @@ Snapshot — первичный инструмент, property-тесты пов
 - [x] **БД:** SQLite + linq2db (решено 2026-04-21, см. decision-log).
 - [x] **Workspaces поверх path-tree:** нет, paths сами по себе namespace (решено 2026-04-21).
 - [x] **Variables vs Secrets storage:** две отдельные таблицы, не единая с `IsSecret`-флагом (решено 2026-04-21).
-- [x] **Include-семантика:** explicit `include "target"` поддерживается в MVP; target — proper ancestor including ноды; sibling/descendant/cross-tree = parse error. Auto ancestor-merge убран. (Решено 2026-04-21; ранее в тот же день было принято обратное, см. decision-log "Include поддерживаем, не откладываем".)
+- [x] **Include-семантика:** каждый `.hocon` = отдельная нода; `dir(target) ancestor-or-equal dir(including)`; siblings в той же dir разрешены → возможны циклы → runtime DFS cycle detection; абсолютные пути only; резолвинг — своя preprocess-стадия до HOCON parse. Auto ancestor-merge убран. (Финализировано 2026-04-21 после двух итераций, см. decision-log "Include-семантика финализирована".)
 - [x] **Конкурентные правки в UI:** optimistic locking через `ContentHash` column + three-way merge modal (решено 2026-04-21).
 - [x] **Secret access control:** API-ключ на path даёт доступ к resolved JSON со всеми секретами; отдельной permission нет (решено 2026-04-21, `spec.md` §4).
 - [x] **ETag формула:** `first-16-hex-chars(sha256(rendered-json))`, strong (решено 2026-04-21, `spec.md` §4.6).

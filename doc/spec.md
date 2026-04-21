@@ -4,10 +4,17 @@
 
 ## 1. Архитектурные принципы
 - **Единый источник истины (SSoT).** Все настройки и секреты хранятся в центральном сервисе.
-- **Иерархия — в путях и авторизации, не в автоматическом merge.** Пути задают namespace и границы ACL (API-ключ scoped на `RootPath`). Контент нод сам по себе **не сливается** автоматически с родителями — каждая нода возвращает ровно тот HOCON, который в ней записан, плюс явно заинклуженные блоки.
-- **Explicit `include`.** Если автор ноды хочет подмешать родительский блок (например, общий `logger-base` из корня), он пишет `include "root"` в тексте. Правило: **target include-директивы должен быть ancestor включающей ноды** по path. Это запрещает sibling- и descendant-инклуды, гарантирует отсутствие циклов по конструкции, и заставляет зависимость быть видимой в коде. См. `decision-log.md` 2026-04-21 "Include поддерживаем, не откладываем".
-- **Fallthrough (откат) — routing, не merge.** Если запрошенный `app/dev/feature` не существует — отдаём контент ближайшей существующей родительской ноды (`app/dev`) как есть. Никаких аggregatн'ых мержей с другими нодами в процессе fallthrough'а — только один "best-match" узел.
-- **Переменные/секреты наследуются по scope.** В отличие от HOCON-контента, variables и secrets видны всем descendants их `ScopePath` автоматически (без explicit include). Коллизия `Key` — побеждает ближайший scope. Это "пассивная видимость" — variable не вклинивается в результирующий JSON, пока кто-то не сошлётся на неё через `${name}`.
+- **Каждый `.hocon` — отдельная нода.** В ментальной модели "filesystem" пути сегментированы по `/`; последний сегмент — имя файла, остальные — "директория". `.hocon`-расширение — визуальная конвенция (в DB хранится path без расширения). Примеры: `logger-base` в корне, `project-a/logger`, `project-a/test/service1`. Директория сама по себе нодой не является, пока в ней физически не создана нода с `RawContent`.
+- **Иерархия — в путях, ACL и include-scope; не в автоматическом merge.** HOCON-контент между нодами **не сливается автоматически**. Каждая нода возвращает свой `RawContent` плюс **явно заинклуженные блоки**.
+- **Explicit `include "absolute-path"` в RawContent.** Правило: `dir(target)` должен быть ancestor-or-equal `dir(including-node)`, где `dir(path)` = `path` без последнего сегмента. Это разрешает:
+    - ancestors ноды (любые ноды в предковых директориях) ✓
+    - siblings в той же директории (`project-a/test/service1` может включать `project-a/test/service2`) ✓
+    - но **не** descendants текущей директории, не другие поддеревья (`project-a/dev/*` не видно из `project-a/test/*`).
+    - **Циклы возможны** (мутуальные sibling-includes типа `service1 ↔ service2`) — детектируются runtime-обходом с `visited` set, violation → понятная ошибка.
+    - Self-include (`include` себя же) — parse error.
+    - Относительные пути (`../foo`) в MVP не поддерживаются. Только абсолютные — для явности при ревью.
+- **Fallthrough (откат) — routing, не merge.** Если запрошенный `/a/b/c/x` не существует как нода — walk up, отдаём контент ближайшей существующей ancestor-ноды (`/a/b/c`, потом `/a/b`, ...). Если ни одна не найдена — 404. Работает только когда промежуточные сегменты сами являются нодами; если директории — чистые namespace без контента, fallthrough сразу даёт 404.
+- **Переменные/секреты наследуются по scope.** Variables и Secrets видны всем descendants их `ScopePath` автоматически (без explicit include). Коллизия `Key` — побеждает ближайший scope. Scope-matching делается против **запрошенного path'а**, не против best-match ноды — чтобы env-специфичные vars работали даже при fallthrough'е к base-шаблону. Variable не появляется в результирующем JSON, пока на неё не сошлётся `${name}` из HOCON.
 - **Разделение форматов:**
     - **Для редактирования (сервер):** HOCON (поддерживает комментарии, инклуды, переменные, логику).
     - **Для доставки (клиент):** чистый JSON (уже собранный, со всеми подстановками).
@@ -82,12 +89,18 @@
 2. **Авторизация (до любого lookup'а).** Валидация ключа + проверка, что запрошенный `path` — потомок `RootPath` ключа (посегментное сравнение, не `StartsWith`, см. §8). **403 раньше 404**: если ключ не даёт доступа — отвечаем `403` без намёка на существование ноды. Только когда доступ разрешён — шаг 3.
 3. **Fallthrough (routing).** Ищем ближайшую существующую non-deleted ноду от `path` вверх до корня. Если ни одна не найдена — `404`. Результат — одна "best-match" нода; **никакого автомержа ancestors на этом этапе**.
 4. **Сборка HOCON.**
-    - Подгрузка Variables + Secrets, чей `ScopePath` — ancestor best-match ноды (включая сам path best-match'а). Ближайший scope перебивает дальний при коллизии Key.
+    - Подгрузка Variables + Secrets, чей `ScopePath` — ancestor-or-equal **запрошенного пути** (не best-match). Ближайший scope перебивает дальний при коллизии Key.
     - Дешифровка Secrets по мастер-ключу (env) с учётом `KeyVersion`.
-    - Рендер variables+secrets в HOCON-фрагмент (`key = "value"` на строку).
-    - **Резолвинг `include`-директив в best-match RawContent:** для каждого `include "target-path"` — валидация (target — proper ancestor of best-match path; иначе parse error), загрузка target'а, рекурсивная обработка его include-директив (кэшируется в рамках запроса, чтобы повторный include той же ноды не дёргал БД). Глубина ограничена (≤ depth of best-match path по конструкции — include только вверх).
-    - Конкатенация: `variables-hocon` + все заинклуженные блоки + `best-match RawContent` (порядок включения важен для substitution resolve).
-    - Единый `HoconConfigurationFactory.ParseString(...)`. Substitutions резолвятся at parse-time (см. `decision-log.md` 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time").
+    - Рендер variables+secrets в HOCON-фрагмент (`key = "value"` на строку) — становится "defaults" слоем.
+    - **Резолвинг `include`-директив — отдельная preprocess-стадия** (не через HOCON-native callback): DFS с `visited: HashSet<NodePath>`. Для каждого `include "absolute-path"`:
+        - валидация scope: `dir(target)` должен быть ancestor-or-equal `dir(including-node)`; self-include запрещён. Нарушение → `IncludeScopeViolation` с понятным сообщением.
+        - cycle check: target уже в `visited` → `CyclicIncludeException` с цепочкой.
+        - добавить target в `visited`, загрузить его `RawContent`, рекурсивно раскрыть его include-директивы.
+        - подставить результат в текст включающей ноды.
+        - На выходе: **плоский HOCON-текст без `include`-директив**.
+    - Причина preprocess'а вместо HOCON `ConfigResolver` callback'а: native callback не получает контекст "кто включает", из-за чего scope-валидация и cycle-detection не выражаются на его API чисто. Preprocess — полный контроль, тот же набор возможностей + явная ошибка вместо непонятного вылета парсера.
+    - Склейка: `variables-hocon` + `flattened-best-match-hocon` (variables перекрываются контентом ноды — стандартная Lightbend-конвенция "defaults first, then overrides").
+    - Единый `HoconConfigurationFactory.ParseString(...)`. Substitutions (`${var}`) резолвятся at parse-time (см. `decision-log.md` 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time"). HOCON-substitution-циклы (`a = ${b}, b = ${a}` в одном тексте) ловятся парсером — отдельный test в plan.md.
 5. **Сериализация.** HOCON-дерево → `System.Text.Json`. Объекты, строки, числа, bool, массивы — прямой маппинг. HOCON-специфичная запись `a.b.c = 1` нормализуется во вложенные объекты.
 6. **ETag и ответ.**
     - `ETag = first-16-hex-chars(sha256(rendered-json-bytes))`, strong ETag (без `W/` префикса).
