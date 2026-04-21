@@ -10,6 +10,14 @@ permissions:
   contents: read
   packages: write
 
+# Deduplicate runs on the same SHA — e.g. when a push to `main` and a subsequent
+# `git tag -f deploy && git push -f origin deploy` both point at the same commit.
+# The later trigger cancels the earlier in-progress run and drives the deploy itself.
+# For PRs, successive pushes to the same branch also cancel stale runs (free CI minutes).
+concurrency:
+  group: ci-${{ github.sha }}
+  cancel-in-progress: true
+
 jobs:
   # ─── Fast lane: frontend checks + xUnit ───
   test:
