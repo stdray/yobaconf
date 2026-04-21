@@ -3,7 +3,7 @@
 
 var target = Argument("target", "Default");
 var configuration = Argument("configuration", "Release");
-var dockerImage = Argument("dockerImage", "yobaconf-web");
+var dockerImage = Argument("dockerImage", "yobaconf");
 var dockerTagArgument = Argument("dockerTag", string.Empty);
 var dockerPushEnabled = Argument("dockerPush", false);
 var ghcrRepositoryArgument = Argument("ghcrRepository", string.Empty);
@@ -164,7 +164,14 @@ Task("DockerSmoke")
 	}
 });
 
+// Publish-gate invariant: DockerPush depends on every test target — explicitly,
+// not just transitively. Test is already in the chain via DockerSmoke → Docker →
+// Test, but listing it here keeps the top-level dependencies visible without
+// walking the tree. When a new test project lands (E2E in Phase B, perf, etc.),
+// append `.IsDependentOn("NewTestTarget")` so publish can never ship ahead of
+// any test suite. Mirrors the same rule in yobalog `build.cake`.
 Task("DockerPush")
+	.IsDependentOn("Test")
 	.IsDependentOn("DockerSmoke")
 	.WithCriteria(() => dockerPushEnabled)
 	.Does(() =>

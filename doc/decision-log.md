@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-04-21 — Self-observability via `Seq.Extensions.Logging` (MEL-native), не Serilog
+
+**Решение:** yobaconf шипит `ILogger<T>`-события в yobalog через его Seq-compat endpoint (`POST {base}/api/events/raw` с `X-Seq-ApiKey`). Используем **`Seq.Extensions.Logging`** 9.0.0 — пакет Datalust, который регистрирует провайдера прямо в `ILoggingBuilder`. Serilog-стек не подключаем.
+
+**Wiring** (в `Program.cs`, до `YobaConfApp.ConfigureServices`):
+```csharp
+var seqUrl = builder.Configuration["YobaLog:ServerUrl"];
+var seqKey = builder.Configuration["YobaLog:ApiKey"];
+if (!string.IsNullOrWhiteSpace(seqUrl))
+    builder.Logging.AddSeq(seqUrl, apiKey: seqKey);
+```
+
+Пустой `ServerUrl` — провайдер не подключается (чистая локалка без yobalog = console-only; интеграционные тесты через `WebApplicationFactory<Program>` приходят сюда же — user-secrets грузятся только в Development, `appsettings.Testing.json` нет, значит `ServerUrl` из `appsettings.json` == `""`). Никаких `IsEnvironment("Testing")`-guard'ов — единственный выключатель = конфиг.
+
+**Конфиг-shape** — плоский `YobaLog:ServerUrl` / `YobaLog:ApiKey`, не Serilog.Settings.Configuration-style массив под `Serilog:WriteTo[0]:Args:`. Два строковых ключа = минимум поверхности для секрет-менеджмента.
+
+**Секреты:**
+- Dev — `dotnet user-secrets set "YobaLog:ServerUrl" ...`, `"YobaLog:ApiKey" ...`. user-secrets резолвятся только в Development env — prod к ним доступ не имеет по конструкции.
+- Prod — GitHub repo secrets `YOBALOG_SERVER_URL` + `YOBALOG_API_KEY`, пробрасываются в `docker run -e YobaLog__ServerUrl=... -e YobaLog__ApiKey=...` в `.github/workflows/ci.yml`. Обе в `secrets`, не `vars` — URL публичный, но объединение "URL + ключ" упрощает audit-trail на стороне GitHub.
+
+**Причина выбора MEL-native над Serilog:**
+- Один пакет vs три (`Serilog` + `Serilog.AspNetCore` + `Serilog.Sinks.Seq`).
+- Не меняем логирующий стек приложения — весь код уже пользуется `ILogger<T>`, switch на Serilog потребовал бы `builder.Host.UseSerilog()` + явный `LoggerConfiguration`. Здесь тот же wire-протокол (CLEF → `/api/events/raw`) достигается одной строкой `AddSeq`.
+- Меньше blast radius: если завтра понадобится вынуть логирование, удаляется ровно 5 строк кода + 1 пакет.
+
+**Что откатили:** Serilog + Serilog.Sinks.Seq как стек (был в `Directory.Packages.props` как draft — удалён из CPM одновременно с этим коммитом).
+
+**OTLP Logs не выбираем** — это Phase C.5 scope (вся OTel-связка: tracing + logs + metrics wiring через `OpenTelemetry.Exporter.OpenTelemetryProtocol`). Сегодняшняя задача — just logs сейчас; CLEF-путь уже боевой в yobalog (Seq-compat landed давно, OTLP Phase F тоже landed, но добавляет зависимостей ради той же пересылки записей).
+
+**Cross-refs:**
+- spec §2 ".NET: Serilog + Serilog.Sinks.Seq. Проверено integration-тестом `SerilogSeqSinkCompatTests`." — спек говорит про клиентскую сторону yobalog (что он compat с Serilog.Sinks.Seq). yobaconf как клиент может использовать любой CLEF-writer; MEL-native — валидный вариант поверх того же wire.
+- yobalog `spec.md` §1 — фиксирует `/compat/seq/api/events/raw` как стабильный endpoint.
+
+---
+
 ## 2026-04-21 — Caddy on host as HTTPS terminator; projects deploy independently (no docker-compose)
 
 **Решение:** HTTPS для YobaConf + yobapub + yobalog + любых будущих HTTP-сервисов на общем хосте реализуется через **Caddy**, установленный на хост как systemd-сервис. Каждый проект деплоится **независимо** через собственный CI (SSH + `docker run -d -p 127.0.0.1:PORT:8080`); Caddy на `:443` реверс-прокси'т на loopback-порт. Никакого docker-compose не вводим.

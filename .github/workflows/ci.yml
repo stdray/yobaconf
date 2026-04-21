@@ -142,5 +142,7 @@ jobs:
               -p 127.0.0.1:8081:8080 \
               -v /opt/yobaconf/data:/app/data \
               -e YOBACONF_MASTER_KEY="${{ secrets.YOBACONF_MASTER_KEY }}" \
+              -e YobaLog__ServerUrl="${{ secrets.YOBALOG_SERVER_URL }}" \
+              -e YobaLog__ApiKey="${{ secrets.YOBALOG_API_KEY }}" \
               "$IMAGE"
             docker system prune -a -f

@@ -15,6 +15,10 @@
 		<PackageVersion Include="Hocon.Configuration" Version="2.0.4" />
 		<PackageVersion Include="linq2db.SQLite.MS" Version="5.4.1" />
 		<PackageVersion Include="YamlDotNet" Version="17.0.1" />
+		<!-- Ships Microsoft.Extensions.Logging events to yobalog via Seq-compat endpoint
+		     (POST {base}/api/events/raw with X-Seq-ApiKey). MEL-native provider from
+		     Datalust — no Serilog stack. See doc/decision-log.md 2026-04-21. -->
+		<PackageVersion Include="Seq.Extensions.Logging" Version="9.0.0" />
 
 		<!-- Transitive pins: Hocon.Configuration 2.0.4 brings in an old System.Configuration.ConfigurationManager
 		     whose chain pulls System.Drawing.Common 4.7.0 (CVE-GHSA-rxg9-xrhp-64gj). Pin forward. -->
@@ -24,8 +28,6 @@
 
 	<ItemGroup>
 		<PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.6" />
-		<PackageVersion Include="Serilog" Version="4.3.0" />
-		<PackageVersion Include="Serilog.Sinks.Seq" Version="9.0.0" />
 		<PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.5.0" />
 		<PackageVersion Include="coverlet.collector" Version="6.0.4" />
 		<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

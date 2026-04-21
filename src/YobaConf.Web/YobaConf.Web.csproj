@@ -1,7 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
+	<PropertyGroup>
+		<UserSecretsId>02842486-e7fe-4404-a419-0e1f10b7d07b</UserSecretsId>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<ProjectReference Include="..\YobaConf.Core\YobaConf.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Seq.Extensions.Logging" />
 	</ItemGroup>
 
 	<!-- Frontend is Release-only from MSBuild. Debug relies on the Cake `Dev` target (or

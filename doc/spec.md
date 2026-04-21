@@ -176,7 +176,8 @@
 
 ## 12. Self-observability
 - Все server-side события (изменения нод, доступ по API-ключам, ошибки резолвинга, `403` по граничным путям) YobaConf пишет в YobaLog через CLEF endpoint. Rate-limiting в MVP не реализован (Phase E).
-- API-ключ YobaConf → YobaLog хранится в `appsettings.json` самого YobaConf (**не** в YobaConf-ноде — иначе бутстрап-цикл, см. §2).
+- API-ключ YobaConf → YobaLog хранится в конфиг-пространстве самого YobaConf (**не** в YobaConf-ноде — иначе бутстрап-цикл, см. §2). В dev — через `dotnet user-secrets`; в prod — env vars `YobaLog__ServerUrl` + `YobaLog__ApiKey`, инъекция из GitHub secrets в `docker run` (см. `.github/workflows/ci.yml`, `doc/deploy.md` Step 6).
+- Реализация: `Seq.Extensions.Logging` 9.0.0, провайдер в `ILoggingBuilder` — шлёт `ILogger<T>`-события как CLEF на `{ServerUrl}/api/events/raw` (Seq-compat namespace yobalog'а `/compat/seq`). См. `decision-log.md` 2026-04-21 "Self-observability via Seq.Extensions.Logging".
 - Отдельный workspace в YobaLog под YobaConf (например, `$system/yobaconf` или выделенный `yobaconf-ops`) — не смешиваем с user workspaces.
 - Рекурсия невозможна по конструкции: YobaLog не зависит от YobaConf, события YobaConf не могут триггерить обращение к YobaConf при записи.
 

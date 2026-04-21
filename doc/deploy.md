@@ -36,6 +36,12 @@ infrastructure.
       (or `dotnet YobaConf.Web.dll --hash-password <plaintext>` in the container).
       **Never store plaintext in secrets** — the hash is PBKDF2-SHA256 and
       safe to expose; plaintext isn't.
+    - `YOBALOG_SERVER_URL` — yobalog Seq-compat base URL, e.g.
+      `https://yobalog.3po.su/compat/seq`. The provider appends `/api/events/raw`;
+      don't include it. Leaving the secret empty disables shipping (container logs
+      stay in `docker logs yobaconf`).
+    - `YOBALOG_API_KEY` — yobalog API key with ingest scope on the target workspace.
+      Generate in yobalog admin UI (`/admin/api-keys`) — plaintext is shown once.
 
 ## Step 1 — generate the admin password hash
 
@@ -143,7 +149,39 @@ Open `https://yobaconf.3po.su/Login` in a browser — you should see the sign-in
 Log in with the username + password you set in Step 1. Land on the empty tree, click
 `New from paste`, and import your first config.
 
-## Step 6 — add API keys for runtime clients
+## Step 6 — wire logs to yobalog
+
+Production events (ILogger<T> calls) ship to yobalog via its Seq-compat endpoint.
+The deploy workflow already forwards both env vars from GitHub secrets — you only
+need to ensure the secrets are set:
+
+1. In yobalog admin UI (`https://yobalog.3po.su/admin/api-keys`), create an API key
+   scoped to the target workspace (e.g. `yobaconf-ops`). Copy the plaintext — it's
+   shown once.
+2. Set the GitHub secrets listed in Prerequisites: `YOBALOG_SERVER_URL` =
+   `https://yobalog.3po.su/compat/seq`, `YOBALOG_API_KEY` = the plaintext above.
+3. Next `deploy` tag push picks them up — no code change needed.
+
+Verify: after deploy, `ILogger.LogInformation` calls inside `/v1/conf` handlers
+should appear in the yobalog workspace within a few seconds. If nothing shows up:
+- `docker logs yobaconf` — any startup error from the Seq provider?
+- Check the API key scope in yobalog — wrong workspace = silent 403 on ingest.
+- `curl -X POST https://yobalog.3po.su/compat/seq/api/events/raw \
+    -H "X-Seq-ApiKey: <key>" -H "Content-Type: application/vnd.serilog.clef" \
+    --data '{"@t":"2026-04-21T00:00:00Z","@l":"Information","@m":"manual probe"}'`
+  should return 201.
+
+**Local dev**: use `dotnet user-secrets` instead of env vars — they only resolve in
+Development environment, so prod can't accidentally pick them up:
+
+```bash
+dotnet user-secrets set "YobaLog:ServerUrl" "https://yobalog.3po.su/compat/seq" --project src/YobaConf.Web
+dotnet user-secrets set "YobaLog:ApiKey"    "<dev-workspace-key>"                --project src/YobaConf.Web
+```
+
+Leaving them unset = local runs log only to console, no yobalog traffic.
+
+## Step 7 — add API keys for runtime clients
 
 YobaConf reads API keys from `appsettings.json` under `ApiKeys:Keys[]`. To add one in
 production without rebuilding, use a mounted `appsettings.Production.json` or env-var
