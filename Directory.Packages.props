@@ -12,6 +12,7 @@
 		<PackageVersion Include="Hocon" Version="2.0.4" />
 		<PackageVersion Include="Hocon.Configuration" Version="2.0.4" />
 		<PackageVersion Include="linq2db.SQLite.MS" Version="5.4.1" />
+		<PackageVersion Include="YamlDotNet" Version="17.0.1" />
 
 		<!-- Transitive pins: Hocon.Configuration 2.0.4 brings in an old System.Configuration.ConfigurationManager
 		     whose chain pulls System.Drawing.Common 4.7.0 (CVE-GHSA-rxg9-xrhp-64gj). Pin forward. -->
