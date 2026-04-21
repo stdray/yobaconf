@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/YobaConf.Client/YobaConf.Client.csproj" />
     <Project Path="src/YobaConf.Core/YobaConf.Core.csproj" />
     <Project Path="src/YobaConf.Web/YobaConf.Web.csproj" />
   </Folder>

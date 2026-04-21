@@ -61,7 +61,7 @@ Snapshot — первичный инструмент, property-тесты пов
     - [ ] Конфиг: `OpenTelemetry:Enabled` (default `false`), `OpenTelemetry:OtlpEndpoint` (default `http://localhost:4318/v1/traces`), `OpenTelemetry:ServiceName` (default `"yobaconf"`).
     - [ ] Unit-тесты: `ActivityListener` fixture verifies spans эмитятся в correct order с expected attributes. 4-6 тестов (resolve happy path / missed node / cycle detection / scope violation).
     - [ ] Документация в README: how to point YobaConf at yobalog / Seq / Jaeger через env var `OpenTelemetry__OtlpEndpoint`.
-- [ ] **Фаза D — клиентские SDK.** .NET (`IConfigurationProvider`), Python (Pydantic source), TS/Bun.
+- [~] **Фаза D — клиентские SDK.** .NET — **готов**: `YobaConf.Client` с `AddYobaConf(options => ...)` extension, `IConfigurationProvider` поверх HttpClient + ETag polling, `JsonFlattener` в flat-key form (`db:host`, `features:0`), `Optional`-flag для fail-soft, inject'ируемый `HttpMessageHandler` для тестов (через `WebApplicationFactory.Server.CreateHandler`). 9 unit + 11 E2E тестов (базовый load, nested → colon, substitutions резолвятся до flattening, variable inheritance, auth error, missing node optional/non-optional, fallthrough, arrays → indexed keys, GetSection, typed binding). Python (Pydantic source) + TS/Bun — отложены.
 - [ ] **Фаза E — push для сверхнагрузок.** Экспорт собранного JSON в Redis/Consul/S3.
 
 ## Тестовое покрытие до фазы A
