@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-04-21 — Build pipeline: Cake + GitVersion; Docker = chiseled + smoke-test; deploy = manual `deploy` tag
+
+**Решение:** сборочный pipeline одинаков для yobaconf и yobalog (будут синхронно расширяться):
+- **GitVersion** (`GitVersion.yml`, `next-version: 0.1.0`) — ContinuousDelivery mode, конфиг скопирован с yobapub. Версия прокидывается в MSBuild `Version` / `InformationalVersion` + в Docker build-args (`APP_VERSION`, `GIT_SHORT_SHA`, `GIT_COMMIT_DATE`).
+- **Cake** (`build.cake` + `build.sh` + `build.ps1` + `.config/dotnet-tools.json`) — orchestration в C# DSL. Tasks: Clean → Restore → Version → Build → Test → Docker → DockerSmoke → DockerPush. Локально `./build.sh --target=Test` даёт полный цикл; `--target=Docker` добавляет сборку образа; `--target=DockerPush --dockerPush=true` пушит в ghcr.io.
+- **Docker runtime** — `mcr.microsoft.com/dotnet/nightly/runtime-deps:10.0-noble-chiseled`. ~15MB base, нет shell. Self-contained publish `linux-x64`. Dockerfile двухстадийный: SDK + bun installer (для MSBuild BuildFrontend target) → chiseled runtime. Риск "chiseled упал на runtime, не попасть внутрь" закрывается **DockerSmoke** task: `docker run -d` + `curl /` с 30s-timeout. Если не отвечает — CI красный, push не происходит.
+- **Deploy** — **только по ручному тегу `deploy`** (`git tag deploy && git push origin deploy`). Main-push: build + test + Docker build + push в ghcr.io, но **без** SSH-деплоя. Pattern повторяет yobapub `tags: ['apps']`, но с тегом `deploy` для явной семантики.
+
+**Причина:**
+- **GitVersion vs ручные теги:** ручное тегирование = каждый раз помнить какая версия; GitVersion даёт детерминированный semver из истории commits+branches. Ноль cognitive overhead после setup.
+- **Cake vs голый shell в ci.yml:** см. yobapub-овский 170-строчный ci.yml. Cake-based — ~30 строк ci.yml + 150 строк build.cake, зато локально `./build.sh --target=X` полный parity с CI. При трёх orchestration-шагах (GitVersion → build → Docker с build-args) Cake уже окупается.
+- **chiseled vs обычный ubuntu:** 15MB vs 200MB, меньше attack surface, MS best-practice для .NET 8+. Единственный минус ("нет shell для дебага") закрывается smoke-test'ом в CI.
+- **Deploy по тегу, не по push main:** main-merge должен быть безопасен (build + test + push в registry), но не ронять прод. Тег `deploy` = явный act of will.
+
+**Версии инструментов:** Cake.Tool 5.0.0, GitVersion.Tool 6.4.0, Cake.Docker 1.3.0. Cake 5.0 свежее animemov-bot-cs (там 4.0.0), но greenfield — смысла оставаться на старом major нет. GitVersion 6.4 синхронно с yobapub `gittools/actions@v4`.
+
+**Отклонения от animemov-bot-cs reference:**
+- Dockerfile включает bun installer в build stage (animemov'у не нужно — нет фронта).
+- Cake task `DockerSmoke` между `Docker` и `DockerPush` (animemov не HTTP-серверный).
+
+**Откатили:**
+- "Голый shell в ci.yml без Cake" — ci.yml разрастётся до yobapub-объёма, local/CI parity теряется.
+- "Обычный ubuntu runtime для простоты" — выигрыш в debug-UX нулевой (всё равно смотрим логи), проигрыш в размере 10×.
+- "Deploy на каждый main push" — риск ронять прод без act of will.
+
+---
+
 ## 2026-04-21 — SQLite + linq2db вместо LiteDB
 
 **Решение:** YobaConf хранит данные в SQLite через `linq2db.SQLite.MS` (та же версия, что в yobalog). Single `.db` file, WAL mode. Миграции — через linq2db (позже) или руками на старте Phase A (схема = 4 таблицы: Nodes, Variables, Secrets, ApiKeys + AuditLog). Транзитивная CVE на `System.Drawing.Common 4.7.0` уже запинена forward через CPM — ничего дополнительно не ломается.

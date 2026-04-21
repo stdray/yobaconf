@@ -2,9 +2,16 @@
 
 Guidance for coding agents working in this repository.
 
-## Status: pre-code, spec-stage
+## Status: Phase A.0 bootstrap complete, no domain code yet
 
-There is no code yet — only design docs under `doc/`. No `.csproj`, no `package.json`, no build/test/lint commands. The first implementation step is the Phase A.0 Bootstrap (tooling skeleton) followed by the Phase A.1 HOCON gate — both described in `doc/plan.md`.
+Toolchain, build pipeline, CI, and scaffolded Core / Web / Tests projects are in place. `doc/plan.md` Phase A.0 and A.1 are closed; Phase A (domain code — `SqliteConfigStore`, include preprocessor, resolve pipeline) is next.
+
+## Build entry points
+
+- **Local:** `./build.sh --target=Test` (bash) or `pwsh ./build.ps1 -Target Test` (PowerShell). Bootstrap restores Cake + GitVersion tools, then runs the Cake task.
+- **Cake tasks:** Clean → Restore → Version (GitVersion) → Build → Test → Docker → DockerSmoke → DockerPush. Locally most useful: `--target=Test` (no Docker) or `--target=Docker` (builds image). `--target=DockerPush --dockerPush=true` requires `GHCR_USERNAME` + `GHCR_TOKEN` env or prior `docker login`.
+- **CI:** mirrors `./build.sh --target=Test` for the fast lane; on `main` push + `deploy` tag push also runs `--target=DockerPush` with ghcr.io credentials.
+- **Deploy:** **manual tag `deploy` only**. `git tag deploy && git push origin deploy --force` (force needed because the tag gets re-used). Main-push publishes the image but does NOT SSH-deploy — prevents accidental prod updates on every merge.
 
 ## Documents — what goes where
 

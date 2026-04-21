@@ -3,14 +3,21 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['deploy']
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  build:
+  # ─── Fast lane: frontend checks + xUnit ───
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -43,14 +50,87 @@ jobs:
         working-directory: src/YobaConf.Web
         run: bun run typecheck
 
-      - name: Dotnet restore
-        run: dotnet restore YobaConf.slnx
-
       - name: Dotnet format verify
-        run: dotnet format YobaConf.slnx --verify-no-changes --no-restore
+        run: |
+          dotnet restore YobaConf.slnx
+          dotnet format YobaConf.slnx --verify-no-changes --no-restore
 
-      - name: Dotnet build
-        run: dotnet build YobaConf.slnx -c Release --no-restore
+      - name: Cake test target
+        run: |
+          chmod +x ./build.sh
+          ./build.sh --target=Test
 
-      - name: Dotnet test
-        run: dotnet test YobaConf.slnx -c Release --no-build
+  # ─── Docker build + push to ghcr.io (on main pushes and deploy tag) ───
+  publish:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      dockerTag: ${{ steps.publish.outputs.dockerTag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cake DockerPush (build + smoke + push)
+        id: publish
+        run: |
+          set -euo pipefail
+          chmod +x ./build.sh
+          TAG_FILE="$RUNNER_TEMP/docker-tag.txt"
+          ./build.sh --target=DockerPush --dockerPush=true --ghcrRepository=${{ github.repository }} --dockerTagOutput="$TAG_FILE"
+          echo "dockerTag=$(cat "$TAG_FILE")" >> "$GITHUB_OUTPUT"
+
+  # ─── Deploy via SSH (only on manual `deploy` tag push) ───
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/deploy'
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          script: |
+            set -euo pipefail
+            IMAGE="ghcr.io/${{ github.repository }}/yobaconf-web:${{ needs.publish.outputs.dockerTag }}"
+            CONTAINER_NAME="yobaconf-web"
+            PASSWORD="${{ secrets.DEPLOY_PASSWORD }}"
+            GHCR_USERNAME="${{ secrets.GHCR_DEPLOY_USERNAME }}"
+            GHCR_TOKEN="${{ secrets.GHCR_DEPLOY_TOKEN }}"
+            run_sudo() { printf '%s\n' "$PASSWORD" | sudo -S -p '' "$@"; }
+            if [ -n "$GHCR_USERNAME" ] && [ -n "$GHCR_TOKEN" ]; then
+              run_sudo bash -c 'printf "%s\n" "$2" | docker login ghcr.io -u "$1" --password-stdin' -- "$GHCR_USERNAME" "$GHCR_TOKEN"
+            else
+              echo "GHCR_DEPLOY_USERNAME/GHCR_DEPLOY_TOKEN secrets are required for docker login" >&2
+              exit 1
+            fi
+            run_sudo docker pull "$IMAGE"
+            run_sudo docker stop "$CONTAINER_NAME" || true
+            run_sudo docker rm "$CONTAINER_NAME" || true
+            run_sudo mkdir -p /opt/yobaconf/data
+            run_sudo docker run -d \
+              --name "$CONTAINER_NAME" \
+              --restart unless-stopped \
+              -p 127.0.0.1:8080:8080 \
+              -v /opt/yobaconf/data:/app/data \
+              -e YOBACONF_MASTER_KEY="${{ secrets.YOBACONF_MASTER_KEY }}" \
+              "$IMAGE"
+            run_sudo docker system prune -a -f

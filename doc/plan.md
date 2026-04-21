@@ -8,7 +8,7 @@ Snapshot — первичный инструмент, property-тесты пов
 
 ## Фазы
 
-- [x] **Фаза A.0 — Bootstrap.** Репо-гигиена и тулинг, без кода приложения. Цель — задать тон один раз, чтобы не переделывать по каждому PR.
+- [x] **Фаза A.0 — Bootstrap.** Репо-гигиена, тулинг, сборочный pipeline (Cake + GitVersion + Docker). Без кода приложения. Цель — задать тон один раз, чтобы не переделывать по каждому PR.
     - [x] `.gitignore`, `.gitattributes`, `.editorconfig` скопированы из yobalog (стек идентичен: .NET 10 + bun + Tailwind; SQLite-файлы ловятся существующим `*.db` паттерном).
     - [x] `global.json` — пин .NET 10 SDK 10.0.202 (rollForward = latestFeature), синхронно с yobalog.
     - [x] `Directory.Build.props` на корне: `<Nullable>enable</Nullable>`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, `<AnalysisLevel>latest-recommended</AnalysisLevel>`, `<AnalysisMode>All</AnalysisMode>`, `<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>`, `<ImplicitUsings>enable</ImplicitUsings>`, `<LangVersion>latest</LangVersion>`, `<InvariantGlobalization>true</InvariantGlobalization>`.
@@ -18,8 +18,12 @@ Snapshot — первичный инструмент, property-тесты пов
     - [x] `biome.json` — lint + format для TS; табы/ширина 2; `noExplicitAny: error`, `noNonNullAssertion: error`, `useConst: error`, `noUnusedVariables/Imports: error`; `useEditorconfig` отключён (biome не парсит `indent_size = tab`).
     - [x] MSBuild target в `YobaConf.Web.csproj`: `BeforeTargets="Build"` + `Condition="'$(Configuration)' == 'Release'"` → `bun install --frozen-lockfile && bun run build`. В Debug MSBuild не трогает фронт.
     - [x] `run_dev.ps1` — два окна PowerShell: `yobaconf-frontend` (bun watchers через concurrently) + `yobaconf-backend` (dotnet watch).
-    - [x] CI skeleton (`.github/workflows/ci.yml`): `bun install` + English-only check на `ts/` + `Pages/` (spec §12) + `biome check` + `bun run typecheck` + `dotnet restore` + `dotnet format --verify-no-changes` + `dotnet build -c Release` + `dotnet test -c Release`.
-    - [x] Smoke-test: всё зелёное локально — `biome check` ✓ (8 файлов), `tsc --noEmit` ✓, `dotnet format --verify-no-changes` ✓, `dotnet build -c Release` ✓ (включая `bun build` + `tailwindcss` через MSBuild target), `dotnet test` 35/35 passed ✓.
+    - [x] CI skeleton (`.github/workflows/ci.yml`): frontend + format checks, затем `./build.sh --target=Test` → Cake pipeline (Clean → Restore → Version → Build → Test). На main-push + tag `deploy` — отдельный `publish` job: `./build.sh --target=DockerPush --dockerPush=true` (включает DockerSmoke task: curl контейнера 30s timeout). На tag `deploy` — третий job `deploy` с SSH (secrets: `DEPLOY_HOST`, `GHCR_DEPLOY_USERNAME/TOKEN`, `YOBACONF_MASTER_KEY`).
+    - [x] `GitVersion.yml` + `.config/dotnet-tools.json` (Cake.Tool 5.0.0 + GitVersion.Tool 6.4.0). Скопировано с yobapub-паттерна, `next-version: 0.1.0`.
+    - [x] `build.cake` + `build.sh` + `build.ps1` — tasks Clean/Restore/Version/Build/Test/Docker/DockerSmoke/DockerPush. См. decision-log "Build pipeline: Cake + GitVersion".
+    - [x] `src/YobaConf.Web/Dockerfile` — two-stage: SDK 10.0 + bun installer → `runtime-deps:10.0-noble-chiseled`. Self-contained linux-x64 publish. GitVersion build-args пробрасываются в env.
+    - [x] `.dockerignore` — node_modules, bin/obj, wwwroot-генерёжка, *.db, .git, tests, doc/, AGENTS/CLAUDE.md.
+    - [x] Smoke-test: всё зелёное локально — `./build.sh --target=Test` 35/35 ✓ (Clean 0.5s + Restore 0.5s + Version 0.4s + Build 1.8s + Test 1.0s = 4.2s total). Docker-target локально не проверен (Docker daemon не запущен в текущей сессии) — будет проверен первым CI-прогоном.
 
 - [x] **Фаза A.1 — HOCON-гейт (блокирующая проверка).** Пройдена 2026-04-21.
     - [x] Выбран пакет: `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 от akkadotnet/HOCON. Все нужные API живут в примерах; substitution резолвится at parse-time (см. decision-log 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time").
