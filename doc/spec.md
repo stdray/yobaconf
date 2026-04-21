@@ -113,8 +113,10 @@
 
 ## 5. Требования к UI (админка)
 - **Проводник.** Дерево папок и узлов для навигации.
-- **Редактор кода.** Monaco Editor с подсветкой синтаксиса HOCON (кастомный TextMate grammar — см. §11). Monaco оправдан, потому что HOCON-файлы бывают длинными, с includes и переменными — full editor experience окупается.
-- **Предпросмотр.** Окно "результата", где виден итоговый JSON, который получит клиент.
+- **Подсветка синтаксиса (read-only view, Phase A).** [Prism.js](https://prismjs.com/) + кастомный HOCON-компонент (порт из [sabieber/vscode-hocon](https://github.com/sabieber/vscode-hocon) TextMate grammar, ~80 строк регексов). Используется для read-only отображения `RawContent` в дереве и для результирующего JSON в preview-панели. ~20-25 KB bundle.
+- **Редактор кода (edit mode, Phase B).** [CodeMirror 6](https://codemirror.net/) с HOCON `StreamLanguage`-токенайзером (порт той же TextMate-грамматики, ~150 строк). Причина CodeMirror вместо Monaco — decision-log 2026-04-21 "CodeMirror 6 + Prism вместо Monaco Editor". Короткая сводка: bundle 200-400 KB vs Monaco 3-5 MB; тот же набор фич для HOCON-use-case; проще в интеграции (ESM-native, web workers опциональны); совпадает с экосистемой stdray.Obsidian (откуда переиспользуется ConflictSolverService-паттерн).
+- **Diff view.** `@codemirror/merge` (~30 KB addon) — compare текущей версии ноды с любым snapshot'ом из AuditLog (§7).
+- **Предпросмотр.** Окно "результата", где виден итоговый JSON, который получит клиент (Prism-подсветкой JSON grammar из коробки).
 - **Хранилище (Vault).** Управление секретами с маскировкой значений (`******`).
 
 ## 6. Масштабируемость и отказоустойчивость
@@ -129,7 +131,7 @@
 - **Unified timeline в UI.** На странице path `/a/b/c` показывается **единая timeline** событий `AuditLog` для этого пути: изменения ноды (Kind=node), Variables с `ScopePath` = этот path, Secrets с тем же ScopePath, изменения API-ключей с RootPath = этот path. Навигация prev/next-state работает через объединённую history, не раздельно по сущностям — рассуждения пользователя типа "что происходило в /yobapub/prod вчера" не должны требовать переключения между тремя вкладками.
 - **Restore удалённого = новая запись из истории.** Timeline показывает snapshot'ы с действием "Restore this version" — одна кнопка создаёт новую запись в target-таблице с контентом из snapshot'а + `IsDeleted=0`. Покрывает undo accidental delete и rollback к произвольной точке. Secret restore использует ту же ветку (encrypted blob перекладывается из `AuditLog` в `Secrets`).
 - **Optimistic locking при редактировании.** `Nodes`, `Variables`, `Secrets` — все содержат `ContentHash` column. UI-редактор шлёт `expectedHash` при save → `UPDATE ... WHERE Id=@id AND ContentHash=@expected`; rows affected = 0 → conflict modal (three-way diff, inspired by stdray.Obsidian ConflictSolverService).
-- **Diff в UI.** Текущая версия vs любой snapshot из `AuditLog` — текстовый diff на `RawContent`/`Value` (HOCON-aware syntax highlighting через Monaco diff-editor).
+- **Diff в UI.** Текущая версия vs любой snapshot из `AuditLog` — текстовый diff на `RawContent`/`Value` через `@codemirror/merge` с HOCON-подсветкой (та же StreamLanguage, что в основном редакторе).
 
 ## 8. Дизайн API и маршрутизация
 - **URL-структура:** `GET /v1/conf/{path}`.
@@ -151,11 +153,12 @@
 - **Редактор конфигов.** Monaco Editor (интеграция через JS-interop).
 
 ## 10. Сборка фронта
-- **Стек.** TypeScript + Tailwind + Monaco через npm, сборка через bun (встроенный bundler, TS из коробки, нативный Windows-бинарник).
-- **Зависимости.** `package.json` рядом с `.csproj`, devDependencies: `monaco-editor`, `tailwindcss`, `typescript`. Сам bun — бинарник, не в `package.json`.
-- **Dev.** Два терминала — `dotnet watch run` и `bun run dev` (параллельно `bun build ts/admin.ts --outdir=wwwroot/js --watch` + `tailwindcss -i ts/app.css -o wwwroot/css/app.css --watch`). CSS/JS — статика из `wwwroot`, браузер подхватывает без рестарта приложения.
-- **Release.** MSBuild target `BeforeTargets="Build"` с `Condition="'$(Configuration)' == 'Release'"` — `bun install --frozen-lockfile && bun run build` (`build` = `typecheck` + минифицированные js/css). CI через `dotnet publish -c Release` собирает всё разом.
-- **Monaco.** Подключается как npm-пакет (`import * as monaco from 'monaco-editor'`). Воркеры language-services билдятся как отдельные entry-points, URL-ы раздаются через `self.MonacoEnvironment.getWorkerUrl`. Для HOCON нужен кастомный TextMate grammar.
+- **Стек.** TypeScript + Tailwind + CodeMirror 6 (Phase B) + Prism (Phase A read-only) через npm, сборка через bun (встроенный bundler, TS из коробки, нативный Windows-бинарник).
+- **Зависимости.** `package.json` рядом с `.csproj`. Фаза A.0 (текущая): `concurrently`, `daisyui`, `tailwindcss`, `typescript`, `@biomejs/biome`. Добавляются по мере появления фич: `prismjs` (Phase A read-only UI), `codemirror` + `@codemirror/state` + `@codemirror/view` + `@codemirror/language` + `@codemirror/merge` + `@codemirror/legacy-modes` (Phase B edit). Сам bun — бинарник, не в `package.json`.
+- **Dev.** `./build.sh --target=Dev` (или `pwsh ./build.ps1 -Target Dev`) — одна Cake-task, запускает `bun run dev` + `dotnet watch` в одной консоли. Ctrl+C убивает оба process tree. Раньше был `run_dev.ps1` c двумя окнами — удалён в коммите a5ad45c.
+- **Release.** MSBuild target `BeforeTargets="Build"` с `Condition="'$(Configuration)' == 'Release'"` — `bun install --frozen-lockfile && bun run build` (`build` = `typecheck` + минифицированные js/css). CI через Cake `DockerPush` таргет собирает всё разом.
+- **CodeMirror 6 + HOCON.** В Phase B добавится `ts/hocon-mode.ts` — `StreamLanguage`-токенайзер HOCON (ручной порт из [sabieber/vscode-hocon](https://github.com/sabieber/vscode-hocon) TextMate grammar, ~150 строк). StreamLanguage хватает для highlighting + basic indent; полноценный Lezer grammar с AST — откладывается до use-case'а semantic-фич (go-to-include-target, autocomplete по `${var}`).
+- **Prism + HOCON.** В Phase A добавится `ts/prism-hocon.ts` — кастомный Prism language component из той же TextMate-базы (~80 строк regex). Для read-only отображения в дереве и JSON-preview (JSON grammar у Prism из коробки).
 
 ## 11. Self-observability
 - Все server-side события (изменения нод, доступ по API-ключам, ошибки резолвинга, `403` по граничным путям) YobaConf пишет в YobaLog через CLEF endpoint. Rate-limiting в MVP не реализован (Phase E).

@@ -31,8 +31,9 @@ When editing: spec changes go to `spec.md`, progress updates to `plan.md`, and a
 - SQLite via `linq2db.SQLite.MS` as the single-file row store for `Nodes`, `Variables`, `Secrets`, `ApiKeys`, `AuditLog`. Same stack as yobalog by design — see `decision-log.md` 2026-04-21 "SQLite + linq2db вместо LiteDB".
 - HOCON as the edit format; JSON as the delivery format. Parser = `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 (akkadotnet/HOCON). Phase A.1 gate closed 2026-04-21. **Substitution resolves at parse-time**, not after `.WithFallback` — see pipeline §4 in spec.
 - AES-256 for secret values at rest. Master key — environment variable (`YOBACONF_MASTER_KEY`), never in `appsettings.json` or in the DB.
-- Monaco Editor (loaded as an npm package) with a custom TextMate grammar for HOCON syntax highlighting.
-- Frontend build: TypeScript + Tailwind + Monaco via `bun` (not npm+node). `package.json` lives next to `.csproj`; Release builds invoke `bun run build` from an MSBuild target.
+- HOCON viewing (Phase A): Prism.js with a hand-ported HOCON component (from sabieber/vscode-hocon TextMate grammar, ~80 lines of regex). Read-only highlighting for the tree + JSON preview, ~25 KB bundle.
+- HOCON editing (Phase B): CodeMirror 6 with a StreamLanguage HOCON tokenizer (same TextMate grammar ported to ~150 lines). Diff view via `@codemirror/merge`. Picked over Monaco Editor — 10× smaller bundle, simpler ESM integration, matches Obsidian's editor so the ConflictSolverService three-way-merge pattern carries over. See `decision-log.md` 2026-04-21 "CodeMirror 6 + Prism вместо Monaco".
+- Frontend build: TypeScript + Tailwind via `bun` (not npm+node). `package.json` lives next to `.csproj`; Release builds invoke `bun run build` from an MSBuild target.
 
 ## Hard invariants (easy to violate — read before coding)
 

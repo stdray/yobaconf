@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-04-21 — CodeMirror 6 + Prism вместо Monaco Editor
+
+**Решение:** HOCON-редактор в админке — **CodeMirror 6** (Phase B, editing); для read-only подсветки в дереве + JSON-preview — **Prism.js** (Phase A). Monaco Editor, который был в первоначальной спеке §5, **не берём**. Diff-view поверх CodeMirror через `@codemirror/merge` addon. HOCON-грамматика — ручной порт TextMate grammar из [sabieber/vscode-hocon](https://github.com/sabieber/vscode-hocon) в две формы: Prism component (~80 строк regex) и CodeMirror `StreamLanguage` tokenizer (~150 строк).
+
+**Причина:**
+- **Bundle size** — Monaco 3-5 MB (editor core + language services + web workers) vs CodeMirror 6 ~200-400 KB + Prism ~25 KB. Для admin-app, куда пользователь заходит редко, 3-5 MB первой загрузки — заметная задержка без выигрыша в функциональности, которая нам нужна.
+- **Фичи, которые реально используем** — syntax highlighting, basic indent, find/replace, diff view. Весь этот набор у CodeMirror есть из коробки, у Prism — highlight-only (достаточно для read-only). Monaco-шная multi-cursor / command palette / breadcrumbs — не нужны для HOCON-файлов <500 строк.
+- **HOCON grammar эффорт эквивалентен.** Monaco использует TextMate grammars, реюзнем sabieber'скую as-is. CodeMirror — нужен ручной порт в StreamLanguage. Порт один раз, ~150 строк. Компенсирует отсутствие "бесплатного" реюза, учитывая выигрыш в размере.
+- **Setup complexity.** Monaco требует `MonacoEnvironment.getWorkerUrl`, AMD-legacy артефакты, worker-based architecture — для bun-сборки всё это решаемо, но с доп. скриптами + документации. CodeMirror 6 — ESM-native, web workers опциональны для базового highlighting. Prism — один `<script>` плюс конфиг.
+- **Ecosystem alignment со stdray.Obsidian.** Obsidian (на котором основан `ConflictSolverService` для three-way merge в conflict-resolution UI) использует CodeMirror 6. Общая экосистема → знакомые паттерны → меньше trial-and-error.
+
+**Deployment phasing:**
+- **Phase A (read-only UI):** Prism + HOCON-component. Нет editing, есть подсветка `RawContent` в дереве и JSON-preview (Prism JSON grammar из коробки). ~25 KB на бандл.
+- **Phase B (CRUD editing):** CodeMirror 6 + StreamLanguage HOCON-tokenizer. Добавляется ~300 KB (editor core + extensions + HOCON). Diff-view через `@codemirror/merge` — conflict modal (spec §7) поверх него.
+- **Отложено до явного use-case'а:** Lezer HOCON grammar (полноценный AST-parser) — упрощает семантические фичи типа "go to definition" по `include`-targets или autocomplete по `${var}`-ссылкам. Пока не нужно, StreamLanguage закрывает highlighting + indent.
+
+**Rejected alternatives:**
+- **Monaco сразу** — 10× bundle при том же наборе использованных фич. TextMate-grammar-reuse как аргумент перестаёт играть когда грамматика — ручной порт в любом случае (sabieber'ская не покрывает всех edge cases HOCON substitutions/includes).
+- **Plain textarea + Prism overlay** (как yobalog для KQL) — для HOCON с includes и длинными блоками UX плохой: нет folding, find/replace только через браузер, нет bracket-matching. KQL у yobalog короткий (~50 chars), HOCON-файлы сотни строк.
+- **Ace Editor** — промежуточный по весу (~500 KB-1MB), но менее активно развивается чем CodeMirror 6; ecosystem переключается на CM6.
+
+**Источники (для истории обсуждения):**
+- [Prism.js supported languages](https://prismjs.com/) — HOCON not in list, custom component needed.
+- [sabieber/vscode-hocon](https://github.com/sabieber/vscode-hocon) — TextMate grammar base, MIT.
+- [CodeMirror 6 Lezer docs](https://lezer.codemirror.net/docs/ref/) — grammar format if we ever upgrade from StreamLanguage.
+
+**Откатили:** Monaco Editor из первоначальной §5 спеки ("Monaco оправдан, потому что HOCON-файлы бывают длинными"). Аргумент "длинные HOCON-файлы" не тянет: и CodeMirror, и Prism отлично обрабатывают 10k+ строк. Длина сама по себе не оправдывает 10× bundle.
+
+---
+
 ## 2026-04-21 — Build pipeline: Cake + GitVersion; Docker = chiseled + smoke-test; deploy = manual `deploy` tag
 
 **Решение:** сборочный pipeline одинаков для yobaconf и yobalog (будут синхронно расширяться):
