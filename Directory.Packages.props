@@ -43,6 +43,7 @@
 		<PackageVersion Include="xunit" Version="2.9.3" />
 		<PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
 		<PackageVersion Include="AwesomeAssertions" Version="9.4.0" />
+		<PackageVersion Include="Microsoft.Playwright" Version="1.59.0" />
 	</ItemGroup>
 
 </Project>

@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<!-- CA1001: xUnit's IAsyncLifetime is the disposal pattern; analyzer only detects IDisposable.
+		     CA1711: `[CollectionDefinition]` requires a marker class; the "Collection" suffix is idiomatic. -->
+		<!-- CA1707: xUnit test names use snake_case for readability (Scenario_Expectation).
+		     CA1001: IAsyncLifetime covers disposal; analyzer only sees IDisposable.
+		     CA1711: `[CollectionDefinition]` marker class convention is "*Collection". -->
+		<NoWarn>$(NoWarn);CA1001;CA1707;CA1711</NoWarn>
+	</PropertyGroup>
+
+	<!-- Ship the web project's wwwroot path to tests via assembly metadata so KestrelAppHost can
+	     point WebRootPath at real CSS/JS files (silences StaticFileMiddleware warnings; gives
+	     Playwright traces real styling for debugging). -->
+	<ItemGroup>
+		<AssemblyMetadata Include="YobaConfWebProjectDir" Value="$(MSBuildThisFileDirectory)..\..\src\YobaConf.Web" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="coverlet.collector" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="Microsoft.Playwright" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="AwesomeAssertions" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Xunit" />
+		<Using Include="Xunit.Abstractions" />
+		<Using Include="AwesomeAssertions" />
+		<Using Include="YobaConf.Core" />
+		<Using Include="Microsoft.Playwright" />
+		<Using Include="Microsoft.Playwright.Assertions" Static="true" />
+		<Using Include="YobaConf.E2ETests.Infrastructure" />
+		<Using Include="YobaConf.E2ETests.Pages" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\YobaConf.Core\YobaConf.Core.csproj" />
+		<ProjectReference Include="..\..\src\YobaConf.Web\YobaConf.Web.csproj" />
+	</ItemGroup>
+
+</Project>

@@ -19,10 +19,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ─── Fast lane: frontend checks + xUnit (PR-only) ───
-  # On push to main / deploy tag the `publish` job re-runs tests via Cake's
+  # ─── Fast lane: frontend checks + unit tests (PR-only) ───
+  # On push to main / deploy tag the `publish` job re-runs unit tests via Cake's
   # DockerPush → DockerSmoke → Docker → Test dependency chain, so there's no need
-  # to repeat the standalone `test` job on post-merge / release-tag events.
+  # to repeat the standalone `test` job there. E2E is explicitly PR-only (separate
+  # `e2e` job below): post-merge runs trust that the PR already proved it green.
   test:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -72,9 +73,56 @@ jobs:
           chmod +x ./build.sh
           ./build.sh --target=Test
 
-  # ─── Docker build + push to ghcr.io (on main pushes and deploy tag) ───
-  # Cake's DockerPush chain runs Test internally, so no `needs: test` here — that job
-  # only runs on PRs and `publish` only on push events, no overlap.
+  # ─── Slow lane: Playwright E2E (PR-only, see `test` job comment) ───
+  e2e:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Bun install (frontend)
+        working-directory: src/YobaConf.Web
+        run: bun install --frozen-lockfile
+
+      # Cache Playwright browsers across runs. Chromium download is ~170MB; hashing
+      # Directory.Packages.props invalidates on Microsoft.Playwright version bumps.
+      # Path `~/.cache/ms-playwright` is where `playwright.ps1 install chromium`
+      # drops browsers on Linux runners (confirmed against yobalog's working cache).
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      # E2ETest target handles its own Build dependency and Chromium install (cached above).
+      - name: Cake E2ETest target
+        run: |
+          chmod +x ./build.sh
+          ./build.sh --target=E2ETest
+
+      - name: Upload trace artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: tests/YobaConf.E2ETests/bin/**/artifacts/*.zip
+          if-no-files-found: ignore
+
+  # ─── Docker build + push to ghcr.io (main pushes + deploy tag) ───
+  # Cake's DockerPush chain covers Test and E2ETest — self-contained pipeline.
+  # `test` / `e2e` jobs only run on PRs and `publish` only on push events, no overlap.
   publish:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -92,6 +140,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      # DockerPush chain includes E2ETest → Chromium download via playwright.ps1.
+      # Shared cache with the PR-only `e2e` job; key bumps when Microsoft.Playwright
+      # version changes in Directory.Packages.props.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

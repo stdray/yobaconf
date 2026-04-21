@@ -11,6 +11,8 @@ var dockerTagOutputArgument = Argument("dockerTagOutput", string.Empty);
 
 var solution = "./YobaConf.slnx";
 var webProject = "./src/YobaConf.Web/YobaConf.Web.csproj";
+var unitTestProject = "./tests/YobaConf.Tests/YobaConf.Tests.csproj";
+var e2eTestProject = "./tests/YobaConf.E2ETests/YobaConf.E2ETests.csproj";
 var dockerFile = "./src/YobaConf.Web/Dockerfile";
 
 GitVersion gitVersion = null;
@@ -64,11 +66,39 @@ Task("Build")
 	DotNetBuild(solution, CreateVersionedBuildSettings(buildVersion, gitVersion.ShortSha, gitVersion.CommitDate));
 });
 
+// Fast lane: unit tests only. E2E sits in its own target because it needs a Playwright
+// Chromium download (~200MB) + headless browser runtime that shouldn't block main builds.
 Task("Test")
 	.IsDependentOn("Build")
 	.Does(() =>
 {
-	DotNetTest(solution, new DotNetTestSettings
+	DotNetTest(unitTestProject, new DotNetTestSettings
+	{
+		Configuration = configuration,
+		NoBuild = true
+	});
+});
+
+// E2E: auto-installs Playwright browsers on first run (fast-path on re-runs — cached in
+// ~/.cache/ms-playwright). `--with-deps` pulls system libs on Linux; no-op on Win/macOS.
+// Depends on Build, not Test, so CI runs the two test targets in parallel without
+// duplicating the compile step.
+Task("E2ETest")
+	.IsDependentOn("Build")
+	.Does(() =>
+{
+	var installer = GetFiles("tests/YobaConf.E2ETests/bin/**/playwright.ps1").FirstOrDefault();
+	if (installer is null)
+		throw new CakeException("playwright.ps1 not found — Build target did not produce it");
+	var withDeps = IsRunningOnUnix() ? "--with-deps" : "";
+	var installExit = StartProcess("pwsh", new ProcessSettings
+	{
+		Arguments = $"{installer.FullPath} install chromium {withDeps}".Trim(),
+	});
+	if (installExit != 0)
+		throw new CakeException($"playwright install failed with exit code {installExit}");
+
+	DotNetTest(e2eTestProject, new DotNetTestSettings
 	{
 		Configuration = configuration,
 		NoBuild = true
@@ -172,6 +202,7 @@ Task("DockerSmoke")
 // any test suite. Mirrors the same rule in yobalog `build.cake`.
 Task("DockerPush")
 	.IsDependentOn("Test")
+	.IsDependentOn("E2ETest")
 	.IsDependentOn("DockerSmoke")
 	.WithCriteria(() => dockerPushEnabled)
 	.Does(() =>
