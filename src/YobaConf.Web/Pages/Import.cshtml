@@ -1,0 +1,59 @@
+@page
+@model YobaConf.Web.Pages.ImportModel
+@{
+	ViewData["Title"] = "New from paste";
+}
+
+<h1 class="text-2xl font-semibold mb-4">New node from paste</h1>
+
+<p class="opacity-70 mb-4 text-sm">
+	Paste an existing config (JSON, YAML, or <code>.env</code>) and get an equivalent HOCON node.
+	Convert previews the result; Save creates or overwrites the node at the target path.
+</p>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-4" data-testid="import-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-4" data-testid="import-success">@Model.SuccessMessage</div>
+}
+
+<form method="post" class="grid grid-cols-2 gap-4">
+	<label class="form-control">
+		<span class="label-text">Target path (dot-separated)</span>
+		<input type="text" name="TargetPath" value="@Model.TargetPath"
+			placeholder="projects.yoba.prod"
+			class="input input-bordered font-mono text-sm" data-testid="import-path" />
+	</label>
+
+	<label class="form-control">
+		<span class="label-text">Source format</span>
+		<select name="Format" class="select select-bordered" data-testid="import-format">
+			<option value="json" selected="@(Model.Format == "json")">JSON</option>
+			<option value="yaml" selected="@(Model.Format == "yaml")">YAML</option>
+			<option value="env" selected="@(Model.Format == "env")">.env</option>
+		</select>
+	</label>
+
+	<label class="form-control col-span-2">
+		<span class="label-text">Source text</span>
+		<textarea name="Source" class="textarea textarea-bordered font-mono text-xs h-48"
+			data-testid="import-source"
+			placeholder="paste config here">@Model.Source</textarea>
+	</label>
+
+	<label class="form-control col-span-2">
+		<span class="label-text">Converted HOCON preview</span>
+		<pre class="bg-base-200 p-3 rounded text-xs overflow-auto h-48 whitespace-pre-wrap"
+			data-testid="import-preview">@Model.Preview</pre>
+	</label>
+
+	<div class="col-span-2 flex gap-2">
+		<button type="submit" name="Action" value="preview" class="btn btn-outline"
+			data-testid="import-convert">Convert (preview only)</button>
+		<button type="submit" name="Action" value="save" class="btn btn-primary"
+			data-testid="import-save">Save as node</button>
+	</div>
+</form>

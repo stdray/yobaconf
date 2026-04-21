@@ -16,7 +16,7 @@ namespace YobaConf.Core.Storage;
 // long-held state in this class. If benchmarks ever show this is a bottleneck, swap to
 // a pooled DataContext — all read paths here are structured to allow that change without
 // API fallout.
-public sealed class SqliteConfigStore : IConfigStore
+public sealed class SqliteConfigStore : IConfigStore, IConfigStoreAdmin
 {
 	readonly string dbPath;
 
@@ -56,6 +56,17 @@ public sealed class SqliteConfigStore : IConfigStore
 		return row is null
 			? null
 			: new HoconNode(NodePath.ParseDb(row.Path), row.RawContent, FromUnixMs(row.UpdatedAt));
+	}
+
+	public IReadOnlyList<NodePath> ListNodePaths()
+	{
+		using var db = Open();
+		var paths = db.GetTable<NodeRow>()
+			.Where(r => r.IsDeleted == 0)
+			.OrderBy(r => r.Path)
+			.Select(r => r.Path)
+			.ToArray();
+		return [.. paths.Select(NodePath.ParseDb)];
 	}
 
 	public IReadOnlyList<Variable> FindVariables(NodePath scope)

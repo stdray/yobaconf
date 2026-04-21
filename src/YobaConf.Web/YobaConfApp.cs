@@ -1,12 +1,15 @@
 using System.Net;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using YobaConf.Core;
 using YobaConf.Core.Storage;
 
 namespace YobaConf.Web;
 
-// Wiring factored out of Program.cs so integration tests can build a Kestrel-hosted
-// app on an ephemeral port without going through WebApplicationFactory (which hard-codes TestServer).
+// Wiring factored out of Program.cs so integration tests can spin up the pipeline via
+// WebApplicationFactory<Program> and override DI for test fakes.
 public static class YobaConfApp
 {
 	public static void ConfigureServices(WebApplicationBuilder builder)
@@ -14,9 +17,9 @@ public static class YobaConfApp
 		ArgumentNullException.ThrowIfNull(builder);
 
 		// Caddy on the host terminates TLS on :443 and reverse-proxies to 127.0.0.1:8081
-		// (see spec §11). Without this wiring HttpContext.Request.IsHttps is false behind
-		// the loopback proxy — UseHttpsRedirection loops 307, cookie Secure-flag is wrong.
-		// Defaults cleared so we trust 127.0.0.1 only; any other X-Forwarded-* source is ignored.
+		// (spec §11). Without this wiring HttpContext.Request.IsHttps = false behind the
+		// loopback proxy — UseHttpsRedirection loops 307, cookie Secure-flag wrong.
+		// Only loopback is trusted; other X-Forwarded-* sources are ignored.
 		builder.Services.Configure<ForwardedHeadersOptions>(o =>
 		{
 			o.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
@@ -29,10 +32,38 @@ public static class YobaConfApp
 		// Options bindings
 		builder.Services.Configure<SqliteConfigStoreOptions>(builder.Configuration.GetSection("SqliteConfigStore"));
 		builder.Services.Configure<ApiKeyOptions>(builder.Configuration.GetSection("ApiKeys"));
+		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 
-		// Core services
-		builder.Services.AddSingleton<IConfigStore, SqliteConfigStore>();
+		// SqliteConfigStore implements both IConfigStore (reads) and IConfigStoreAdmin
+		// (writes). Same singleton under both interfaces: the resolve pipeline takes
+		// IConfigStore → can't accidentally write; admin-UI takes IConfigStoreAdmin.
+		builder.Services.AddSingleton<SqliteConfigStore>();
+		builder.Services.AddSingleton<IConfigStore>(sp => sp.GetRequiredService<SqliteConfigStore>());
+		builder.Services.AddSingleton<IConfigStoreAdmin>(sp => sp.GetRequiredService<SqliteConfigStore>());
 		builder.Services.AddSingleton<IApiKeyStore, ConfigApiKeyStore>();
+		// TimeProvider.System by default; tests override with FakeTimeProvider if they need
+		// deterministic UpdatedAt values on upsert.
+		builder.Services.AddSingleton(TimeProvider.System);
+
+		// Cookie-auth for admin UI. Single admin (AdminOptions: username + PBKDF2 hash).
+		// Multi-admin with a DB-backed user store is Phase B+.
+		builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+			.AddCookie(o =>
+			{
+				o.LoginPath = "/Login";
+				o.AccessDeniedPath = "/Login";
+				o.ExpireTimeSpan = TimeSpan.FromDays(7);
+				o.SlidingExpiration = true;
+			});
+
+		// Fallback policy: every Razor Page + endpoint requires auth unless explicitly
+		// opted out. Login page carries [AllowAnonymous]; API endpoints (/v1/conf,
+		// /health, /version) use .AllowAnonymous() since they have their own auth
+		// mechanisms (API-key) or are intentionally public.
+		builder.Services.AddAuthorizationBuilder()
+			.SetFallbackPolicy(new AuthorizationPolicyBuilder()
+				.RequireAuthenticatedUser()
+				.Build());
 
 		builder.Services.AddRazorPages();
 	}
@@ -49,13 +80,11 @@ public static class YobaConfApp
 			app.UseHsts();
 		}
 
-		// ForwardedHeaders must run before any middleware that inspects the scheme (in
-		// particular UseHttpsRedirection). Under Caddy the incoming scheme on the socket
-		// is http; the middleware rewrites HttpContext.Request.Scheme to https so that
-		// UseHttpsRedirection sees the real client scheme and doesn't bounce 307 → 307.
+		// ForwardedHeaders must come before UseHttpsRedirection + UseAuthentication so
+		// scheme-aware middleware sees the real client scheme (spec §11, Caddy).
 		app.UseForwardedHeaders();
 
-		// UseHttpsRedirection skipped under "Testing" — lets Kestrel-based tests use plain http://.
+		// Tests use plain http:// so skip HTTPS redirection in Testing env.
 		if (!isTesting)
 		{
 			app.UseHttpsRedirection();
@@ -63,28 +92,32 @@ public static class YobaConfApp
 
 		app.UseStaticFiles();
 		app.UseRouting();
+		app.UseAuthentication();
+		app.UseAuthorization();
 
-		// Lightweight liveness probe for Docker healthcheck and the Cake DockerSmoke task.
-		// No dependencies — returns 200 as long as the process is up and serving HTTP.
-		// /ready (DB-connectable check) will be added when DB-probe pattern gets factored out.
-		app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+		// Liveness probe — public (Docker healthcheck, Cake DockerSmoke).
+		app.MapGet("/health", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
 
-		// Build provenance: GitVersion injects APP_VERSION / GIT_SHORT_SHA / GIT_COMMIT_DATE
-		// into the Docker image as env vars (see src/YobaConf.Web/Dockerfile ARG/ENV pairs).
-		// Local dev has no such vars — fall through to "dev"/"local"/empty so the endpoint
-		// is always available for quick "which build is this?" inspection.
+		// Build provenance — public. GitVersion injects via Docker env vars; local dev
+		// falls through to dev/local/empty.
 		app.MapGet("/version", () => Results.Ok(new
 		{
 			semVer = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev",
 			shortSha = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local",
 			commitDate = Environment.GetEnvironmentVariable("GIT_COMMIT_DATE") ?? string.Empty,
-		}));
+		})).AllowAnonymous();
 
-		// Canonical config-resolve endpoint (spec §4, §8). URL path uses dot-notation
-		// (`yobaproj.yobaapp.prod`); internally converted to `NodePath.ParseUrl`.
-		// Catch-all `{**urlPath}` supports arbitrarily-deep paths without route template
-		// constraints. Auth via `X-YobaConf-ApiKey` header or `?apiKey=` query string.
-		app.MapGet("/v1/conf/{**urlPath}", ConfEndpointHandler.Handle);
+		// Canonical config-resolve — API-key auth (not cookie), so AllowAnonymous to the
+		// cookie-auth fallback. ConfEndpointHandler enforces its own auth inside.
+		app.MapGet("/v1/conf/{**urlPath}", ConfEndpointHandler.Handle).AllowAnonymous();
+
+		// Admin logout — POST-only. Requires auth (no AllowAnonymous), so the cookie
+		// middleware 401s unauthenticated callers before SignOutAsync runs.
+		app.MapPost("/Logout", async (HttpContext ctx) =>
+		{
+			await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+			return Results.Redirect("/Login");
+		});
 
 		app.MapRazorPages();
 	}

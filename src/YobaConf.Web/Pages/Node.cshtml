@@ -1,0 +1,65 @@
+@page
+@model YobaConf.Web.Pages.NodeModel
+@{
+	ViewData["Title"] = Model.Path.ToDbPath();
+}
+
+<div class="mb-4 text-sm">
+	<a asp-page="/Index" class="link opacity-70 hover:opacity-100" data-testid="back-to-index">← All configs</a>
+</div>
+
+<h1 class="text-xl font-mono mb-4" data-testid="node-title">@Model.Path.ToDbPath()</h1>
+
+<div class="grid grid-cols-2 gap-4">
+	<section>
+		<h2 class="text-sm uppercase opacity-70 mb-2">Raw HOCON</h2>
+		@if (Model.NodeExists)
+		{
+			<pre class="bg-base-200 p-3 rounded text-xs overflow-auto min-h-40" data-testid="node-raw">@Model.RawContent</pre>
+		}
+		else
+		{
+			<div class="alert alert-warning" data-testid="node-fallthrough-notice">
+				<span>
+					No node at this exact path.
+					@if (Model.ResolvedFromPath is not null)
+					{
+						<span>
+							Resolved via fallthrough from
+							<a asp-page="/Node" asp-route-path="@Model.ResolvedFromPath.Value.ToUrlPath()"
+								class="link font-mono"
+								data-testid="fallthrough-target">@Model.ResolvedFromPath.Value.ToDbPath()</a>.
+						</span>
+					}
+				</span>
+			</div>
+		}
+	</section>
+
+	<section>
+		<h2 class="text-sm uppercase opacity-70 mb-2 flex items-center gap-2">
+			<span>Resolved JSON</span>
+			@if (!string.IsNullOrEmpty(Model.ETag))
+			{
+				<span class="badge badge-xs font-mono" data-testid="node-etag">@Model.ETag</span>
+			}
+		</h2>
+
+		@if (Model.ResolveError is not null)
+		{
+			<div class="alert alert-error" data-testid="resolve-error">@Model.ResolveError</div>
+		}
+		else
+		{
+			<pre class="bg-base-200 p-3 rounded text-xs overflow-auto min-h-40" data-testid="node-json"><code class="language-json">@Model.ResolvedJson</code></pre>
+		}
+	</section>
+</div>
+
+@section Scripts {
+	<script>
+		// Re-run Prism after HTML render — the JSON preview is inside a <code> block marked
+		// with language-json. Prism auto-highlights everything marked `.language-*` on load.
+		if (window.Prism) { window.Prism.highlightAll(); }
+	</script>
+}
