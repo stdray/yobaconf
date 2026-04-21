@@ -19,8 +19,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ─── Fast lane: frontend checks + xUnit ───
+  # ─── Fast lane: frontend checks + xUnit (PR-only) ───
+  # On push to main / deploy tag the `publish` job re-runs tests via Cake's
+  # DockerPush → DockerSmoke → Docker → Test dependency chain, so there's no need
+  # to repeat the standalone `test` job on post-merge / release-tag events.
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,9 +73,10 @@ jobs:
           ./build.sh --target=Test
 
   # ─── Docker build + push to ghcr.io (on main pushes and deploy tag) ───
+  # Cake's DockerPush chain runs Test internally, so no `needs: test` here — that job
+  # only runs on PRs and `publish` only on push events, no overlap.
   publish:
     if: github.event_name == 'push'
-    needs: test
     runs-on: ubuntu-latest
     outputs:
       dockerTag: ${{ steps.publish.outputs.dockerTag }}
