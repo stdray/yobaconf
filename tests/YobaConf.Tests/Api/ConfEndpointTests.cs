@@ -12,8 +12,8 @@ namespace YobaConf.Tests.Api;
 // up the whole YobaConfApp pipeline, then swap IConfigStore and IApiKeyStore for in-memory
 // fakes — the default SqliteConfigStore would try to open a `.db` file.
 //
-// The factory runs under the "Testing" environment, which flips off UseHttpsRedirection
-// (per YobaConfApp.Configure). That lets us use plain http:// in test HttpClient calls.
+// HTTPS redirection is no longer wired into the app (Caddy terminates TLS at the edge
+// in prod), so the factory's default http:// HttpClient works without special env flags.
 public sealed class ConfEndpointTests : IClassFixture<WebApplicationFactory<Program>>
 {
 	readonly WebApplicationFactory<Program> factory;
@@ -33,7 +33,6 @@ public sealed class ConfEndpointTests : IClassFixture<WebApplicationFactory<Prog
 
 		var client = factory.WithWebHostBuilder(builder =>
 		{
-			builder.UseEnvironment("Testing");
 			builder.ConfigureServices(services =>
 			{
 				// Remove defaults registered by YobaConfApp.ConfigureServices.

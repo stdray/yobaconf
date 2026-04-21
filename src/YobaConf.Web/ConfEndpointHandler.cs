@@ -1,4 +1,5 @@
 using YobaConf.Core;
+using YobaConf.Core.Security;
 
 namespace YobaConf.Web;
 
@@ -30,7 +31,8 @@ static class ConfEndpointHandler
 		string? urlPath,
 		HttpContext ctx,
 		IConfigStore store,
-		IApiKeyStore keys)
+		IApiKeyStore keys,
+		IServiceProvider services)
 	{
 		var token = ExtractToken(ctx);
 		if (string.IsNullOrEmpty(token))
@@ -39,6 +41,12 @@ static class ConfEndpointHandler
 		var apiKey = keys.Validate(token);
 		if (apiKey is null)
 			return Results.Unauthorized();
+
+		// GetService (not GetRequiredService) — Testing env skips DI registration so
+		// fixtures don't all need YOBACONF_MASTER_KEY. Resolve raises with a clear
+		// message if secrets are in scope but encryptor is null, deferring the check
+		// to the same throw-site as a missing-key misconfig in prod.
+		var encryptor = services.GetService<ISecretEncryptor>();
 
 		NodePath requestedPath;
 		try
@@ -59,7 +67,7 @@ static class ConfEndpointHandler
 		ResolveResult result;
 		try
 		{
-			result = ResolvePipeline.Resolve(requestedPath, store);
+			result = ResolvePipeline.Resolve(requestedPath, store, encryptor);
 		}
 		catch (NodeNotFoundException)
 		{

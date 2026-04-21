@@ -1,8 +1,10 @@
+using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
 using Hocon;
 using YobaConf.Core.Include;
 using YobaConf.Core.Observability;
+using YobaConf.Core.Security;
 using YobaConf.Core.Serialization;
 
 namespace YobaConf.Core;
@@ -38,7 +40,15 @@ namespace YobaConf.Core;
 // duration on children. See doc/decision-log.md 2026-04-21 Phase C.5.
 public static class ResolvePipeline
 {
-	public static ResolveResult Resolve(NodePath requestedPath, IConfigStore store)
+	// Phase-A overload kept so existing call sites (tests, UI pages that don't need
+	// secrets) don't have to thread null through everywhere. Delegates to the main
+	// overload with a null encryptor; that path fails loudly if the store surfaces
+	// any secrets, which is the correct behaviour — silently dropping them would
+	// leave substitutions dangling.
+	public static ResolveResult Resolve(NodePath requestedPath, IConfigStore store) =>
+		Resolve(requestedPath, store, encryptor: null);
+
+	public static ResolveResult Resolve(NodePath requestedPath, IConfigStore store, ISecretEncryptor? encryptor)
 	{
 		ArgumentNullException.ThrowIfNull(store);
 
@@ -59,9 +69,33 @@ public static class ResolvePipeline
 		{
 			variableSet = VariableScopeResolver.Resolve(requestedPath, store);
 			a?.SetTag("yobaconf.variables.count", variableSet.Variables.Length);
+			a?.SetTag("yobaconf.secrets.count", variableSet.Secrets.Length);
 		}
 
-		var variablesHocon = HoconVariableRenderer.Render(variableSet.Variables);
+		// Decrypt secrets into variable-like rows and merge into the variables layer.
+		// VariableScopeResolver already deduped by Key (Secret wins at equal scope), so the
+		// concat cannot introduce key collisions — the HOCON fragment prefix ends up with
+		// each Key at most once.
+		var merged = variableSet.Variables;
+		if (variableSet.Secrets.Length > 0)
+		{
+			if (encryptor is null)
+				throw new InvalidOperationException(
+					$"Resolve at '{requestedPath.ToDbPath()}' encountered {variableSet.Secrets.Length} " +
+					$"secret(s) in scope but no ISecretEncryptor was supplied. Register one in DI " +
+					$"(YOBACONF_MASTER_KEY env var) or pass it explicitly at the call site.");
+
+			var builder = ImmutableArray.CreateBuilder<Variable>(merged.Length + variableSet.Secrets.Length);
+			builder.AddRange(merged);
+			foreach (var s in variableSet.Secrets)
+			{
+				var plain = encryptor.Decrypt(s.EncryptedValue, s.Iv, s.AuthTag, s.KeyVersion);
+				builder.Add(new Variable(s.Key, plain, s.ScopePath, s.UpdatedAt));
+			}
+			merged = builder.ToImmutable();
+		}
+
+		var variablesHocon = HoconVariableRenderer.Render(merged);
 
 		string flatHocon;
 		using (ActivitySources.Resolve.StartActivity("yobaconf.include-preprocess"))

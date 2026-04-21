@@ -9,6 +9,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using YobaConf.Core;
 using YobaConf.Core.Observability;
+using YobaConf.Core.Security;
 using YobaConf.Core.Storage;
 
 namespace YobaConf.Web;
@@ -46,22 +47,33 @@ public static class YobaConfApp
 		builder.Services.AddSingleton<IConfigStore>(sp => sp.GetRequiredService<SqliteConfigStore>());
 		builder.Services.AddSingleton<IConfigStoreAdmin>(sp => sp.GetRequiredService<SqliteConfigStore>());
 		builder.Services.AddSingleton<IApiKeyStore, ConfigApiKeyStore>();
+
+		// AES-256-GCM secrets encryption (Phase C). Master key from env var
+		// YOBACONF_MASTER_KEY (base64, 32 bytes decoded). Empty/missing = encryptor not
+		// registered; ConfEndpointHandler / Node page fetch via GetService so null is
+		// handled, and Resolve raises a clear error only if secrets are in scope without
+		// an encryptor. Prod containers inject the env from GH secrets; dev sets it via
+		// `dotnet user-secrets set YOBACONF_MASTER_KEY ...`; tests leave it unset by
+		// default and secret-aware tests register a stub via service override.
+		var masterKey = builder.Configuration["YOBACONF_MASTER_KEY"];
+		if (!string.IsNullOrWhiteSpace(masterKey))
+			builder.Services.AddSingleton<ISecretEncryptor>(new AesGcmSecretEncryptor(masterKey));
 		// TimeProvider.System by default; tests override with FakeTimeProvider if they need
 		// deterministic UpdatedAt values on upsert.
 		builder.Services.AddSingleton(TimeProvider.System);
 
-		// Persist DataProtection keys across container restarts. Default behavior is a
-		// fresh in-memory master key per process — every redeploy invalidates every
-		// previously-issued cookie and antiforgery token ("key not found in key ring").
-		// Mount `/app/data` (the same volume SQLite lives on) — the `keys` sub-dir is
-		// created on first boot and chowned to the chiseled app UID via the Docker mount.
-		// No XML encryptor: filesystem permissions (single-user app-UID, volume owner
-		// 1654:1654 per deploy.md Step 3) are the boundary. Gated off Testing so
-		// WebApplicationFactory tests don't fight over a shared keys directory.
-		if (!builder.Environment.IsEnvironment("Testing"))
+		// Persist DataProtection keys across container restarts. Default ASP.NET behavior
+		// is an in-memory master key regenerated per process — every redeploy then
+		// invalidates every prior cookie + antiforgery token ("key not found in key ring").
+		// Config-driven: empty `DataProtection:KeysDirectory` = no persistence (tests and
+		// dev-without-user-secrets fall here, getting the harmless in-memory default);
+		// prod sets it via ENV in the Dockerfile (`DataProtection__KeysDirectory=/app/data/keys`)
+		// pointing at the mounted data volume that survives redeploys. No XML encryptor:
+		// filesystem permissions (single-user app-UID, volume chowned 1654:1654 per
+		// deploy.md Step 3) are the boundary.
+		var keysDir = builder.Configuration["DataProtection:KeysDirectory"];
+		if (!string.IsNullOrWhiteSpace(keysDir))
 		{
-			var dataDir = builder.Configuration["SqliteConfigStore:DataDirectory"] ?? "./data";
-			var keysDir = Path.Combine(dataDir, "keys");
 			Directory.CreateDirectory(keysDir);
 			builder.Services.AddDataProtection()
 				.PersistKeysToFileSystem(new DirectoryInfo(keysDir))
@@ -90,11 +102,12 @@ public static class YobaConfApp
 
 		builder.Services.AddRazorPages();
 
-		// Phase C.5 OpenTelemetry self-emission. Gated on OpenTelemetry:Enabled == true
-		// (default false in appsettings — production turns it on via env var) AND
-		// !IsEnvironment("Testing") so unit/integration tests don't pay the
-		// ActivityListener tax. Tests that need to assert emission opt in via their own
-		// ActivityListener (see tests/YobaConf.Tests/Observability/TracingTests.cs).
+		// Phase C.5 OpenTelemetry self-emission. Gated on `OpenTelemetry:Enabled == true`
+		// AND non-empty `OpenTelemetry:OtlpEndpoint`. Default appsettings has both off,
+		// so dev/tests don't register the exporter; prod turns both on via env vars. No
+		// environment-name check — Testing env inherits the same config-driven gate, and
+		// tests that want to exercise emission register their own ActivityListener
+		// (see tests/YobaConf.Tests/Observability/TracingTests.cs).
 		//
 		// The OTLP exporter ships spans to yobalog's `/v1/traces` endpoint over HTTP/Protobuf.
 		// Auth reuses YobaLog:ApiKey — same key, same workspace as CLEF logs ingestion.
@@ -102,9 +115,7 @@ public static class YobaConfApp
 		// spans by service in the waterfall UI.
 		var otelEnabled = builder.Configuration.GetValue("OpenTelemetry:Enabled", false);
 		var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
-		if (otelEnabled
-			&& !builder.Environment.IsEnvironment("Testing")
-			&& !string.IsNullOrWhiteSpace(otlpEndpoint))
+		if (otelEnabled && !string.IsNullOrWhiteSpace(otlpEndpoint))
 		{
 			var serviceName = builder.Configuration["OpenTelemetry:ServiceName"] ?? "yobaconf";
 			var serviceVersion = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
@@ -140,9 +151,12 @@ public static class YobaConfApp
 	{
 		ArgumentNullException.ThrowIfNull(app);
 
-		var isTesting = app.Environment.EnvironmentName.Equals("Testing", StringComparison.Ordinal);
-
-		if (!app.Environment.IsDevelopment() && !isTesting)
+		// Standard ASP.NET template pattern: production error handling + HSTS outside
+		// Development. No Testing-env special case — integration tests via
+		// WebApplicationFactory land here too and behave like prod; tests that want
+		// to assert on specific error status-codes hit endpoints directly, which
+		// short-circuit the exception handler.
+		if (!app.Environment.IsDevelopment())
 		{
 			app.UseExceptionHandler("/Error");
 			app.UseHsts();

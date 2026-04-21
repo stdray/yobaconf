@@ -34,7 +34,6 @@ public sealed class WebUiTests : IClassFixture<WebApplicationFactory<Program>>
 
 		var client = _factory.WithWebHostBuilder(builder =>
 		{
-			builder.UseEnvironment("Testing");
 			builder.ConfigureAppConfiguration((_, cfg) =>
 			{
 				// Admin credentials injected via in-memory config provider. PBKDF2 hash is
@@ -215,7 +214,6 @@ public sealed class WebUiTests : IClassFixture<WebApplicationFactory<Program>>
 		var fx = new Fixture();
 		var client = _factory.WithWebHostBuilder(builder =>
 		{
-			builder.UseEnvironment("Testing");
 			builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
 			{
 				["Admin:Username"] = AdminUser,
@@ -254,7 +252,6 @@ public sealed class WebUiTests : IClassFixture<WebApplicationFactory<Program>>
 		var fx = new Fixture();
 		var client = _factory.WithWebHostBuilder(builder =>
 		{
-			builder.UseEnvironment("Testing");
 			builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
 			{
 				["Admin:Username"] = AdminUser,

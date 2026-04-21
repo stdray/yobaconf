@@ -27,7 +27,6 @@ public sealed class YobaConfConfigurationProviderTests : IClassFixture<WebApplic
 	WebApplicationFactory<Program> MakeServer(Action<InMemoryConfigStore> seedStore) =>
 		_factory.WithWebHostBuilder(builder =>
 		{
-			builder.UseEnvironment("Testing");
 			var store = new InMemoryConfigStore();
 			seedStore(store);
 			builder.ConfigureServices(services =>

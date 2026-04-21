@@ -42,6 +42,11 @@ ENV APP_VERSION=$APP_VERSION
 ENV GIT_SHORT_SHA=$GIT_SHORT_SHA
 ENV GIT_COMMIT_DATE=$GIT_COMMIT_DATE
 ENV ASPNETCORE_URLS=http://+:8080
+# Persist ASP.NET DataProtection keys on the mounted data volume so cookies and
+# antiforgery tokens survive container restarts. The keys dir sits alongside the
+# SQLite file under /app/data (chowned to app:app via the COPY --chown above).
+# Locally or in tests — env unset → default in-memory keyring kicks in, no file I/O.
+ENV DataProtection__KeysDirectory=/app/data/keys
 WORKDIR /app
 COPY --from=build --chown=app:app /app/publish .
 # `data/` holds the SQLite file (Nodes / Variables / Secrets / ApiKeys / AuditLog).

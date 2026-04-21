@@ -4,14 +4,23 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaConf.Core;
 using YobaConf.Core.Include;
+using YobaConf.Core.Security;
 
 namespace YobaConf.Web.Pages;
 
 public sealed class NodeModel : PageModel
 {
 	readonly IConfigStore _store;
+	readonly ISecretEncryptor? _encryptor;
 
-	public NodeModel(IConfigStore store) => _store = store;
+	// Encryptor is optional — Testing env skips DI registration so WebApplicationFactory
+	// fixtures don't all need a master key. Pages that hit Resolve with secrets in scope
+	// get a clear error message from the pipeline in that case.
+	public NodeModel(IConfigStore store, ISecretEncryptor? encryptor = null)
+	{
+		_store = store;
+		_encryptor = encryptor;
+	}
 
 	public NodePath Path { get; private set; }
 	public bool NodeExists { get; private set; }
@@ -42,7 +51,7 @@ public sealed class NodeModel : PageModel
 
 		try
 		{
-			var result = ResolvePipeline.Resolve(Path, _store);
+			var result = ResolvePipeline.Resolve(Path, _store, _encryptor);
 			ResolvedJson = PrettyPrintJson(result.Json);
 			ETag = result.ETag;
 

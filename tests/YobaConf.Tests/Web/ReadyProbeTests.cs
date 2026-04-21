@@ -16,7 +16,6 @@ public sealed class ReadyProbeTests : IClassFixture<WebApplicationFactory<Progra
 	HttpClient MakeClient(IConfigStore store) =>
 		_factory.WithWebHostBuilder(builder =>
 		{
-			builder.UseEnvironment("Testing");
 			builder.ConfigureServices(services =>
 			{
 				services.RemoveAll<IConfigStore>();

@@ -93,7 +93,20 @@ Snapshot — первичный инструмент, property-тесты пов
 - **Локализация с первого дня.** Все user-facing строки через `IStringLocalizer`. Пока i18n-каркаса нет — все строки **литерально на английском ASCII**. CI будет иметь non-ASCII check на `ts/` и `Pages/` (как в yobalog).
 - **UI-селекторы: `data-testid` обязателен.** Как в yobalog (`tests/YobaConf.E2ETests/` появится в Phase B): `page.GetByTestId(...)`, никаких `GetByText`, `GetByRole(Name=...)`, CSS-класс-селекторов на chrome. Display-строки — цели локализации, сломаются на первом же переводе.
 - **Frontend build — Release-only.** Debug не зовёт `bun` из MSBuild; для dev — параллельные watcher'ы (`dotnet watch` + `bun run dev`).
+- **Никакого `IsEnvironment("Testing")` в production-коде.** Ни прямо (`builder.Environment.IsEnvironment("Testing")`), ни косвенно (`EnvironmentName.Equals("Testing", ...)`). Any gate that needs "off in tests" → config-driven (пустая строка в appsettings = off, env var в Dockerfile/CI = on). Причина: magic-string coupling между prod-кодом и test-setup'ом — тест снимает "Testing", prod-код делает невидимый switch. Config-driven gate транспарентен в любом env. Применяется к ISecretEncryptor (gate = non-empty `YOBACONF_MASTER_KEY`), DataProtection (gate = non-empty `DataProtection:KeysDirectory`), OpenTelemetry (gate = `OpenTelemetry:Enabled == true` + non-empty endpoint). `IsDevelopment()` допустим — это built-in ASP.NET pattern из template'а (ExceptionHandler/HSTS off in dev), не coupling с тестами.
 - **Cake publish зависит от всех test-таргетов явно.** `DockerPush` — единственная точка публикации Docker-образа — перечисляет `IsDependentOn` каждого test-таргета, даже если он уже в chain транзитивно (`DockerSmoke → Docker → Test`). Правило: когда добавляется новый test-таргет (E2E в Phase B, perf, etc.), обязательно приходит новый `.IsDependentOn(...)` на `DockerPush`. Синхронно с yobalog `build.cake` (`DockerPush` там `.IsDependentOn("Test").IsDependentOn("E2ETest").IsDependentOn("DockerSmoke")`). Мотивация: явная зависимость страхует от рефакторинга chain'а, когда кто-то разорвёт транзитивную цепочку и не заметит, что Publish теперь пропускает суиту.
+
+## Перф-наблюдения из prod-трейсов (follow-ups, не блокируют)
+
+Зафиксировано из waterfall'ов yobalog после выкатки Phase C.5. Фиксить когда реально заболит или пользователь чувствует.
+
+- [ ] **Первый `sqlite.find-node` — 133.8ms, а последующие — 8.4ms / 1.1ms. Разница 16×.** Это почти наверняка cold-start: первый `SQLiteTools.CreateDataConnection` прогревает connection pool + применяет `PRAGMA journal_mode=WAL;` (которое наш `Open()` делает на каждом открытии). Что можно дёшево:
+    - Применить WAL один раз при инициализации (в ctor) вместо per-connection — decision зафиксирована в комментариях `Open()` как "safe no-op", но само выполнение PRAGMA не бесплатно.
+    - Либо warmup-запрос при старте (`ListNodePaths` из `/ready` handler'а и так это делает).
+
+    Не блокирует, но первый запрос после redeploy'я всегда будет медленным — пользователь чувствует.
+
+- [ ] **N+1 в `yobaconf.variables-resolve` — 6 SQL запросов** (2 на scope level × 3 уровня: `project-a/env/ns` → `project-a/env` → `project-a` → root — то есть 3-4 уровня, вижу 3 пары). Для глубокого дерева (`company/project/env/region/cluster/service`) станет 12+ запросов. Известный tradeoff scope-resolver'а; лёгкий фикс — один `WHERE ScopePath IN (path1, path2, ..., '')` запрос + группировка в памяти. Отдельный follow-up когда заболит.
 
 ## Расщепление документации (когда появится репозиторий)
 
