@@ -55,6 +55,20 @@ When editing: spec changes go to `spec.md`, progress updates to `plan.md`, and a
 - **Maximum static typing — no escape hatches.** C#: no `object`, no `dynamic`; use generics, discriminated-union-style `record` hierarchies, or `OneOf<>`-style types. The only place `JsonElement`/`JsonNode` is acceptable is the delivery boundary (final JSON response) — and it must be parsed into typed shapes before flowing back into the resolve pipeline. TypeScript: `strict: true`, no `any`, no `unknown` in public APIs (use it only at runtime-validation boundaries — e.g. parsing network responses — and narrow immediately via a type guard or schema). Prefer discriminated unions and branded types over string primitives for IDs (`NodePath`, `ApiKeyId`, `WorkspaceId`).
 - **Formatting:** indent with **tabs**, rendered as **2 spaces wide**. Enforced via `.editorconfig` at the repo root — don't override per-editor. Final newline, UTF-8, trimmed trailing whitespace. LF line endings in source files (`.gitattributes` normalizes).
 
+## Commit convention (synchronised with yobalog)
+
+Both repos follow **Conventional Commits** for consistency.
+
+- **Subject:** `type(scope): short description`, ≤ 72 chars, imperative mood, no trailing period.
+    - Types in use: `feat`, `fix`, `refactor`, `test`, `style`, `docs`, `chore`, `build`.
+    - Scopes (indicative, add as needed): `core`, `web`, `hocon`, `include`, `schema`, `admin`, `e2e`, `css`, `bootstrap`, `docs`, `deps`.
+- **Body (markdown):**
+    - Bolded section headers (`**Thing.**`) separate distinct changes when a commit touches multiple concerns.
+    - Explain the **why** and the tricky bits — don't narrate what the diff already shows.
+    - End with a test-totals footer when tests were run: `Totals: N unit + M E2E = X green, R/R stable runs.` (R/R is how many times the full suite passed out of how many attempted — skip if only one run).
+    - `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` footer when the commit was AI-assisted.
+- **ASCII-only in commit bodies.** Matches spec §12 rules on user-facing strings; commit metadata is subject to the same constraint so `git log` reads cleanly in any terminal.
+
 ## Working style for this repo
 
 - When the user asks about "next step" or "what to do," check `doc/plan.md` — phases are the source of truth for ordering.
