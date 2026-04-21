@@ -119,7 +119,7 @@ jobs:
           script: |
             set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
-            CONTAINER_NAME="yobaconf-web"
+            CONTAINER_NAME="yobaconf"
             # DEPLOY_USERNAME is in the `docker` group → no sudo for docker commands.
             # /opt/yobaconf/data is pre-created during host bootstrap with chown 1654:1654
             # (chiseled `app` UID) so the container can write its SQLite file on mount — see
