@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-04-21 — Logging policy: shared workspace, короткая PascalCase-таксономия, scope-enrichment
+
+**Решения зафиксированы в `doc/logging-policy.md`** — самодостаточный файл, пригодный для копирования в консьюмер-проекты (yobapub, kpvotes, animemov-bot-cs, yobaspeach) без cross-ref'ов. Ключевые решения:
+
+### 1. Общий workspace `apps-prod`, не изолированный `yobaconf-ops`
+
+**Причина:** yobalog MVP не умеет cross-workspace KQL — каждый workspace = свой `.db`, query engine per-WS. Cross-service trace-correlation (animemov-bot-cs → yobaconf → ...) невозможно без shared workspace. Изоляция между сервисами — через CLEF-поле `App` + retention-policies, не через WS-разделение.
+
+**Что откатили:** мысль выделить `yobaconf-ops` workspace (было в плане spec §12). Формулировка §12 обновлена.
+
+**Трейдофф:** один шумный сервис тянет retention всей группы. Митигация — per-level per-app retention-policies (yobalog умеет `@l == Information and App == "X" → 3 days`).
+
+### 2. Field naming: PascalCase короткое, не camelCase и не длинное
+
+**Taxonomy** (полная — в `doc/logging-policy.md`):
+- Static (scope, на каждом request-событии): `App`, `Env`, `Ver`, `Sha`, `Host`
+- Activity-tracking (авто): `TraceId`, `SpanId`
+- Per-request (scope после `UseAuthentication`): `Ip`, `User`
+- Access-log (via `UseHttpLogging`): `Method`, `Path`, `StatusCode`, `Duration`
+- Domain (stamped at call-site): `Path`, `Resolved`, `Status`, `ETag`, `Key`, `Scope`, `Incs`, `Depth`, `ElapsedMs`
+
+**Причина naming'а:**
+- PascalCase — Seq/CLEF community default (Serilog message-template destructuring даёт `{UserId}` → `UserId`, вся экосистема Seq-клиентов ждёт это).
+- Короткие имена (`App` не `Application`, `Ver` не `Version`, `Ip` не `ClientIP`) — shared workspace с 5+ сервисами = KQL-запросы часто, screen-realestate в table-view сильно ограничен.
+- Acronyms `ETag`/`Ip` (не `Etag`/`IP`) — следуем .NET-naming guideline'у (capitalize only first letter of acronym).
+
+**Что откатили:** длинные имена `Application`/`Environment`/`CommitSha`/`ClientIP`/`ApiKeyScope` (были в первом проекте policy).
+
+### 3. Enrichment-механика: scope-middleware, не Serilog-enricher
+
+**Причина:** Seq.Extensions.Logging (MEL-native) не имеет встроенных enricher'ов — это ограничение vs Serilog. Два workaround'а:
+- **Scope-middleware** на request-pipeline: каждый request оборачивается в `ILogger.BeginScope` с static-props. Покрывает ~95% volume'а (request-path события).
+- **Startup/background-services** проходят ВНЕ scope'а — у них не будет `App`/`Env`/... Fallback в KQL: фильтр по `SourceContext startswith "YourApp."`.
+
+**Почему не Serilog:** решение commit'а `cdf9f4b` — остаться на MEL-native (один пакет vs три, не меняем логирующий стек). 95% покрытия scope'ом достаточно; если 5% startup-событий станет критично — точечный upgrade на Serilog (легко, один файл — Program.cs).
+
+### 4. HttpLogging с skip'ом `/health` + `/ready`
+
+`UseHttpLogging` через `UseWhen` branching пропускает probe-paths. Без этого Docker healthcheck / k8s-readiness / Caddy-probe дают 1-10 event/sec чистого мусора.
+
+**Поля HttpLogging**: `Method|Path|StatusCode|Duration`. НЕ включаем headers (токены в `Authorization`/`Cookie`/`X-*-ApiKey`) и bodies (шум + potential PII).
+
+### Cross-refs
+- `doc/logging-policy.md` — полный wiring-template для копирования
+- `doc/decision-log.md` 2026-04-21 "Self-observability via Seq.Extensions.Logging" — почему MEL, не Serilog (первое решение про transport/stack; это — второе про конкретные поля/workspace)
+
+---
+
 ## 2026-04-21 — Self-observability via `Seq.Extensions.Logging` (MEL-native), не Serilog
 
 **Решение:** yobaconf шипит `ILogger<T>`-события в yobalog через его Seq-compat endpoint (`POST {base}/api/events/raw` с `X-Seq-ApiKey`). Используем **`Seq.Extensions.Logging`** 9.0.0 — пакет Datalust, который регистрирует провайдера прямо в `ILoggingBuilder`. Serilog-стек не подключаем.
