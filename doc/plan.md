@@ -8,22 +8,23 @@ Snapshot — первичный инструмент, property-тесты пов
 
 ## Фазы
 
-- [ ] **Фаза A.0 — Bootstrap.** Репо-гигиена и тулинг, без кода приложения. Цель — задать тон один раз, чтобы не переделывать по каждому PR.
-    - [x] `.gitignore`, `.gitattributes`, `.editorconfig` скопированы из yobalog (стек идентичен: .NET 10 + bun + Tailwind; LiteDB-файлы ловятся существующим `*.db` паттерном).
+- [x] **Фаза A.0 — Bootstrap.** Репо-гигиена и тулинг, без кода приложения. Цель — задать тон один раз, чтобы не переделывать по каждому PR.
+    - [x] `.gitignore`, `.gitattributes`, `.editorconfig` скопированы из yobalog (стек идентичен: .NET 10 + bun + Tailwind; SQLite-файлы ловятся существующим `*.db` паттерном).
     - [x] `global.json` — пин .NET 10 SDK 10.0.202 (rollForward = latestFeature), синхронно с yobalog.
     - [x] `Directory.Build.props` на корне: `<Nullable>enable</Nullable>`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, `<AnalysisLevel>latest-recommended</AnalysisLevel>`, `<AnalysisMode>All</AnalysisMode>`, `<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>`, `<ImplicitUsings>enable</ImplicitUsings>`, `<LangVersion>latest</LangVersion>`, `<InvariantGlobalization>true</InvariantGlobalization>`.
-    - [x] `Directory.Packages.props` — Central Package Management включён (`<CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>`). Versions пока только тестовые (xunit, FluentAssertions, coverlet, Microsoft.NET.Test.Sdk). HOCON-пакет добавится после Phase A.1.
-    - [~] Solution skeleton: `YobaConf.slnx` + `src/YobaConf.Core` + `tests/YobaConf.Tests` созданы. `src/YobaConf.Web` пока отложен до Phase A основного (Razor Pages появится вместе с API endpoint и UI).
-    - [ ] Фронт-бутстрап рядом с `YobaConf.Web`: `package.json`, `tsconfig.json` со всеми strict-флагами + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` + `noImplicitOverride` + `noUnusedLocals` + `noPropertyAccessFromIndexSignature`, `tailwind.config.js`, заглушки `ts/admin.ts` и `ts/app.css`, `bun.lock` (текстовый, закоммичен).
-    - [ ] `biome.json` — lint + format для TS; табы/ширина 2; `noExplicitAny: error`, `noNonNullAssertion: error`, `useConst: error`. `useEditorconfig` отключён по той же причине, что и в yobalog (biome не парсит `indent_size = tab`).
-    - [ ] MSBuild target в `YobaConf.Web.csproj`: `BeforeTargets="Build"` + `Condition="'$(Configuration)' == 'Release'"` → `bun install --frozen-lockfile && bun run build`. В Debug MSBuild не трогает фронт.
-    - [ ] CI skeleton (`.github/workflows/ci.yml`): `bun install` + `biome check` + `bun run typecheck` + `dotnet restore` + `dotnet format --verify-no-changes` + `dotnet build -c Release` + `dotnet test -c Release`.
-    - [ ] Smoke-test: всё зелёное локально.
+    - [x] `Directory.Packages.props` — Central Package Management включён. Hocon 2.0.4 + Hocon.Configuration 2.0.4 + linq2db.SQLite.MS 5.4.1 + transitive CVE pins.
+    - [x] Solution skeleton: `YobaConf.slnx` + `src/YobaConf.Core` + `src/YobaConf.Web` (минимальный Razor Pages webapp с Index + Error + `_Layout`) + `tests/YobaConf.Tests`. Общие property — в `Directory.Build.props`.
+    - [x] Фронт-бутстрап рядом с `YobaConf.Web`: `package.json` (concurrently + daisyui + tailwindcss + typescript + @biomejs/biome — monaco-editor добавится в Phase B при интеграции редактора), `tsconfig.json` со всеми strict-флагами включая `noUncheckedIndexedAccess` / `exactOptionalPropertyTypes` / `noImplicitOverride` / `noPropertyAccessFromIndexSignature`, `tailwind.config.js` (content: только `.cshtml` + `.ts`, `.cs` не сканируем — AGENTS.md запрещает HTML в .cs), заглушки `ts/admin.ts` и `ts/app.css`, `bun.lock` сгенерирован `bun install`.
+    - [x] `biome.json` — lint + format для TS; табы/ширина 2; `noExplicitAny: error`, `noNonNullAssertion: error`, `useConst: error`, `noUnusedVariables/Imports: error`; `useEditorconfig` отключён (biome не парсит `indent_size = tab`).
+    - [x] MSBuild target в `YobaConf.Web.csproj`: `BeforeTargets="Build"` + `Condition="'$(Configuration)' == 'Release'"` → `bun install --frozen-lockfile && bun run build`. В Debug MSBuild не трогает фронт.
+    - [x] `run_dev.ps1` — два окна PowerShell: `yobaconf-frontend` (bun watchers через concurrently) + `yobaconf-backend` (dotnet watch).
+    - [x] CI skeleton (`.github/workflows/ci.yml`): `bun install` + English-only check на `ts/` + `Pages/` (spec §12) + `biome check` + `bun run typecheck` + `dotnet restore` + `dotnet format --verify-no-changes` + `dotnet build -c Release` + `dotnet test -c Release`.
+    - [x] Smoke-test: всё зелёное локально — `biome check` ✓ (8 файлов), `tsc --noEmit` ✓, `dotnet format --verify-no-changes` ✓, `dotnet build -c Release` ✓ (включая `bun build` + `tailwindcss` через MSBuild target), `dotnet test` 35/35 passed ✓.
 
 - [x] **Фаза A.1 — HOCON-гейт (блокирующая проверка).** Пройдена 2026-04-21.
-    - [x] Выбран пакет: `Hocon` 2.0.4 от akkadotnet/HOCON. Все нужные API живы в примерах: `HoconConfigurationFactory.ParseString`, `HoconParser.Parse(hocon, ConfigResolver)` с callback'ом на `include` (File/Resource/Url/кастом), `.WithFallback(other)`, `${?var}` substitution, `.PrettyPrint(indent)`. Активность репы низкая (последний функциональный релиз 2021), но API стабильный (Akka.NET core). Подробности + downgrade path — `decision-log.md`.
-    - [x] Пакет прописан в `Directory.Packages.props`.
-    - [ ] Smoke-test с реальным dotnet restore — отложен до Phase A.0 solution skeleton (когда появится `.csproj` на кого повесить PackageReference).
+    - [x] Выбран пакет: `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 от akkadotnet/HOCON. Все нужные API живут в примерах; substitution резолвится at parse-time (см. decision-log 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time").
+    - [x] Пакеты прописаны в `Directory.Packages.props`.
+    - [x] Smoke-test с реальным dotnet restore + dotnet test: 35/35 passed (Phase A.0 smoke-test закрыл этот пункт).
 
 - [ ] **Фаза A — dog-food ready.** API `GET /v1/conf/{path}` с Fallthrough и резолвингом переменных (без секретов, без истории), API-ключи со scoped `RootPath`, минимальный read-only UI (дерево + просмотр HOCON + результирующий JSON), bootstrap из `appsettings.json`. На этой фазе YobaConf уже хостит конфиги для других своих проектов.
     - [~] Доменные типы в Core: `NodePath` готов (slug-регex + `.`/`/` round-trip). Остаются: `HoconNode` (готов как record), `Variable`, `ApiKey`, `IConfigStore` (stub), `ResolveResult`.

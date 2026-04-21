@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Bun install (frontend)
+        working-directory: src/YobaConf.Web
+        run: bun install --frozen-lockfile
+
+      - name: English-only (user-facing files, spec §12)
+        run: |
+          set -e
+          if grep -RPn '[^\x00-\x7F]' \
+              src/YobaConf.Web/ts \
+              src/YobaConf.Web/Pages \
+              2>/dev/null; then
+            echo "::error::Non-ASCII characters in user-facing files. English-only until i18n scaffold lands (spec §12)."
+            exit 1
+          fi
+
+      - name: Biome check
+        working-directory: src/YobaConf.Web
+        run: bun run lint
+
+      - name: TypeScript typecheck
+        working-directory: src/YobaConf.Web
+        run: bun run typecheck
+
+      - name: Dotnet restore
+        run: dotnet restore YobaConf.slnx
+
+      - name: Dotnet format verify
+        run: dotnet format YobaConf.slnx --verify-no-changes --no-restore
+
+      - name: Dotnet build
+        run: dotnet build YobaConf.slnx -c Release --no-restore
+
+      - name: Dotnet test
+        run: dotnet test YobaConf.slnx -c Release --no-build
