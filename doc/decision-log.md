@@ -11,10 +11,12 @@
 **Host-port convention (единая для всех проектов на шаред-хосте):**
 - `127.0.0.1:8080` — yobapub (существующий, до-Caddy эра, остаётся)
 - `127.0.0.1:8081` — yobaconf
-- `127.0.0.1:8082` — yobalog (reserved)
+- `127.0.0.1:8082` — yobalog (зафиксировано yobalog-коммитом [464f9b4](../../yobalog/commit/464f9b4) — yobalog деплоится первым в продакшн и владеет one-time host bootstrap'ом: `apt install caddy`, firewall, scaffold `/etc/caddy/Caddyfile`. Последующие сервисы только добавляют fragment'ы)
 - Следующие свободные — для новых сервисов
 
 Таблица дублируется в `infra/Caddyfile.fragment` каждого HTTP-serving проекта (комментарий сверху). Это локальный source-of-truth для "какой порт у этого сервиса"; центральный Caddyfile на хосте — глобальная картина.
+
+**Yobalog-specific deviation (для справки):** yobalog в своём fragment'е использует `flush_interval -1` в `reverse_proxy` block для поддержки SSE (`/api/ws/{id}/tail` live-tail). Yobaconf SSE не имеет, поэтому в нашем fragment'е этой директивы нет. Если когда-нибудь yobaconf добавит SSE-endpoint (например, live-updates дерева при edit'ах через htmx) — скопируем паттерн.
 
 **Причина отказа от docker-compose:**
 - Проекты независимы по lifecycle'у: yobapub релизится на tag `apps`, yobaconf — на `deploy`, yobalog — на `deploy` (в их репо). docker-compose навязывает единый "up/down" для всех — противоречит изолированным CI.
