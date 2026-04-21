@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
@@ -48,6 +49,24 @@ public static class YobaConfApp
 		// TimeProvider.System by default; tests override with FakeTimeProvider if they need
 		// deterministic UpdatedAt values on upsert.
 		builder.Services.AddSingleton(TimeProvider.System);
+
+		// Persist DataProtection keys across container restarts. Default behavior is a
+		// fresh in-memory master key per process — every redeploy invalidates every
+		// previously-issued cookie and antiforgery token ("key not found in key ring").
+		// Mount `/app/data` (the same volume SQLite lives on) — the `keys` sub-dir is
+		// created on first boot and chowned to the chiseled app UID via the Docker mount.
+		// No XML encryptor: filesystem permissions (single-user app-UID, volume owner
+		// 1654:1654 per deploy.md Step 3) are the boundary. Gated off Testing so
+		// WebApplicationFactory tests don't fight over a shared keys directory.
+		if (!builder.Environment.IsEnvironment("Testing"))
+		{
+			var dataDir = builder.Configuration["SqliteConfigStore:DataDirectory"] ?? "./data";
+			var keysDir = Path.Combine(dataDir, "keys");
+			Directory.CreateDirectory(keysDir);
+			builder.Services.AddDataProtection()
+				.PersistKeysToFileSystem(new DirectoryInfo(keysDir))
+				.SetApplicationName("yobaconf");
+		}
 
 		// Cookie-auth for admin UI. Single admin (AdminOptions: username + PBKDF2 hash).
 		// Multi-admin with a DB-backed user store is Phase B+.
@@ -129,15 +148,14 @@ public static class YobaConfApp
 			app.UseHsts();
 		}
 
-		// ForwardedHeaders must come before UseHttpsRedirection + UseAuthentication so
-		// scheme-aware middleware sees the real client scheme (spec §11, Caddy).
+		// ForwardedHeaders must come before UseAuthentication so scheme-aware middleware
+		// sees the real client scheme (spec §11, Caddy). No UseHttpsRedirection inside the
+		// app: Caddy on the host already redirects :80 -> :443 at the edge, and the app's
+		// own upstream connection from Caddy is loopback HTTP by design. A second layer of
+		// redirect inside ASP.NET would be dead code at best and a "HTTPS port not
+		// determined" warning at worst — which is exactly what Kestrel emitted before this
+		// was dropped.
 		app.UseForwardedHeaders();
-
-		// Tests use plain http:// so skip HTTPS redirection in Testing env.
-		if (!isTesting)
-		{
-			app.UseHttpsRedirection();
-		}
 
 		app.UseStaticFiles();
 		app.UseRouting();
