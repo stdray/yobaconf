@@ -27,23 +27,50 @@
 ### Program.cs
 
 ```csharp
+using Seq.Extensions.Logging;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Activity tracking: stamp TraceId/SpanId on every event. W3C traceparent
-// propagation is on by default in HttpClient + ASP.NET Core — cross-service
-// call chains join automatically.
+// 1. Stamp TraceId/SpanId on every event. W3C traceparent propagation is on
+//    by default in HttpClient + ASP.NET Core — cross-service call chains
+//    join automatically.
 builder.Logging.Configure(o => o.ActivityTrackingOptions =
     ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
 
-// Seq-compat sink — disabled on empty ServerUrl (dev without user-secrets,
-// integration tests via WebApplicationFactory).
+// 2. Seq-compat sink with static enrichers. AddSeq's `enrichers:` parameter
+//    accepts `Action<LogEvent>[]` — each lambda fires on EVERY event
+//    (including startup, background, IHostedService) and can stamp
+//    CLEF-properties via evt.AddOrUpdateProperty. This is the MEL-native
+//    equivalent of Serilog's Enrich.WithProperty — 100% coverage, no scope
+//    middleware needed for static identity.
+//
+//    Gated on non-empty ServerUrl: dev without user-secrets / integration
+//    tests see ServerUrl="" and skip registration (console-only logging).
 var seqUrl = builder.Configuration["YobaLog:ServerUrl"];
 var seqKey = builder.Configuration["YobaLog:ApiKey"];
 if (!string.IsNullOrWhiteSpace(seqUrl))
-    builder.Logging.AddSeq(seqUrl, apiKey: seqKey);
+{
+    // Config-driven static props come from YobaLog:Properties subsection.
+    // Consumer projects override ONLY `App` — others are runtime-computed.
+    var configProps = builder.Configuration.GetSection("YobaLog:Properties")
+        .GetChildren()
+        .ToDictionary(c => c.Key, c => (object?)c.Value);
 
-// Structured access-log — skip probe endpoints (health/ready hit every few
-// seconds from Docker healthcheck / k8s probe / Caddy; pure noise).
+    configProps["Env"]  = builder.Environment.EnvironmentName;
+    configProps["Ver"]  = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
+    configProps["Sha"]  = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local";
+    configProps["Host"] = Environment.MachineName;
+
+    builder.Logging.AddSeq(
+        serverUrl: seqUrl,
+        apiKey: seqKey,
+        enrichers: configProps
+            .Select(kv => (Action<LogEvent>)(evt => evt.AddOrUpdateProperty(kv.Key, kv.Value)))
+            .ToArray());
+}
+
+// 3. Structured access-log — skip probe endpoints (health/ready hit every
+//    few seconds from Docker healthcheck / k8s / Caddy; pure noise).
 builder.Services.AddHttpLogging(o =>
 {
     o.LoggingFields = HttpLoggingFields.RequestMethod
@@ -64,45 +91,25 @@ app.UseWhen(
         && !ctx.Request.Path.StartsWithSegments("/ready"),
     branch => branch.UseHttpLogging());
 
-// Static+request enrichment: wrap every request in a scope with App/Env/Ver/Sha/
-// Host/Ip. `User` is added in a second scope after UseAuthentication so that
-// authenticated requests get a user-tagged event while anonymous ones don't fake
-// a null value.
+// Per-request enrichment: `Ip` always, `User` only when authenticated.
+// Static props (App/Env/Ver/Sha/Host) are already on the event via the
+// AddSeq enrichers above — this middleware only adds what's request-scope-
+// dynamic. Runs after UseAuthentication so ctx.User is populated.
+app.UseAuthentication();
+app.UseAuthorization();
 app.Use(async (ctx, next) =>
 {
     var logger = ctx.RequestServices.GetRequiredService<ILogger<Program>>();
-    using (logger.BeginScope(new Dictionary<string, object?>
+    var scopeProps = new Dictionary<string, object?>
     {
-        ["App"]  = "<your-app-name>",             // short, lowercase, stable identifier
-        ["Env"]  = app.Environment.EnvironmentName,
-        ["Ver"]  = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev",
-        ["Sha"]  = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local",
-        ["Host"] = Environment.MachineName,
-        ["Ip"]   = ctx.Connection.RemoteIpAddress?.ToString(),
-    }))
-    {
-        await next();
-    }
-});
-
-app.UseAuthentication();
-app.UseAuthorization();
-
-// User-enrichment: only when authenticated. Avoids `User: null` on every anon
-// event (those are filtered in yobalog KQL by `has_cs User` instead).
-app.Use(async (ctx, next) =>
-{
+        ["Ip"] = ctx.Connection.RemoteIpAddress?.ToString(),
+    };
     var userName = ctx.User.Identity?.Name;
     if (!string.IsNullOrEmpty(userName))
-    {
-        var logger = ctx.RequestServices.GetRequiredService<ILogger<Program>>();
-        using (logger.BeginScope(new Dictionary<string, object?> { ["User"] = userName }))
-            await next();
-    }
-    else
-    {
+        scopeProps["User"] = userName;
+
+    using (logger.BeginScope(scopeProps))
         await next();
-    }
 });
 
 // ... rest of your pipeline (UseEndpoints, MapRazorPages, etc.) ...
@@ -121,38 +128,42 @@ app.Run();
       "Microsoft.AspNetCore.HttpLogging": "Information"
     }
   },
-  "YobaLog": { "ServerUrl": "", "ApiKey": "" }
+  "YobaLog": {
+    "ServerUrl": "",
+    "ApiKey": "",
+    "Properties": {
+      "App": "<your-app-name>"
+    }
+  }
 }
 ```
 
-Обязательные три уровня:
+Обязательные три log-level:
 - `Default: Information` — твой собственный код пишет на Info+.
 - `Microsoft.AspNetCore: Warning` — давит Kestrel-шум (`Request starting HTTP/2 GET ...` / `Request finished ...` — 2 event/request, без фильтра это 50% volume'а).
 - `Microsoft.AspNetCore.HttpLogging: Information` — `UseHttpLogging` пишет в эту категорию, её **не** должен давить Warning-фильтр выше.
 
-### Ограничения scope-enrichment'а
+Секция `YobaLog:Properties` — **единственное место, где меняется per-project конфиг** (на консьюмер-сервисе: `"App": "yobapub"` / `"App": "kpvotes"` / etc.). Остальной wiring — копия. Если нужны дополнительные постоянные тэги (тип сервиса, region, cluster, ...) — добавляются сюда же, enricher подхватит автоматом.
 
-Scope-middleware покрывает request-path события (~95% volume'а prod-сервиса). **Startup-события и background-hosted-services** проходят ВНЕ scope'а — у них не будет `App`/`Env`/`Ver`/`Sha`/`Host`. Fallback в KQL: фильтровать по `SourceContext startswith "YourApp."` — имя ассемблери в `SourceContext` остаётся детерминированным.
+### Покрытие enricher-подхода
 
-Если 5% startup/background-логов без `App`-поля — это критично (например, у сервиса много long-running hosted services), более радикальные варианты:
-- Свитч на Serilog с `Enrich.WithProperty("App", "...")` — enricher срабатывает на ВСЕХ событиях, не scope-based.
-- Wrap `app.Run()` в scope главного треда — scope распространяется через AsyncLocal на request-таски. Менее надёжно: flows through ExecutionContext, но startup-события ДО `app.Run()` всё равно без scope'а.
+AddSeq-enricher срабатывает на **каждом** CLEF-событии — request-path, startup, background `IHostedService`, `IHostApplicationLifetime`-callback'и, всё. В отличие от scope-middleware подхода (покрывает только request-pipeline). Никаких fallback'ов через `SourceContext startswith` не нужно.
 
-Для MVP — scope-middleware + `SourceContext`-filter хватает.
+`Ip` и `User` остаются в scope-middleware потому что они request-контекстные — enricher без `HttpContext.Current` их не вытянет.
 
 ## Field taxonomy
 
 Naming — **PascalCase, короткое и однозначное**. Seq/CLEF community convention — PascalCase (Serilog message-template property-destructuring даёт `UserId` → `UserId`, вся экосистема Seq-клиентов на этом). camelCase / snake_case валидны парсером yobalog, но рвут compat с existing tooling.
 
-### Static (на каждом request-событии, через scope)
+### Static (на каждом событии, через AddSeq-enricher)
 
 | Поле | Источник | Пример | Назначение |
 |---|---|---|---|
-| `App` | scope, hardcode | `"yobaconf"` | Фильтрация в shared workspace |
-| `Env` | scope, `IWebHostEnvironment.EnvironmentName` | `"Production"` | Отличить prod от staging |
-| `Ver` | scope, env var `APP_VERSION` | `"0.1.0-42"` | Привязка к билду |
-| `Sha` | scope, env var `GIT_SHORT_SHA` | `"139fc78"` | Привязка к коммиту |
-| `Host` | scope, `Environment.MachineName` | `"yobaconf"` | Multi-instance / после restart |
+| `App` | `YobaLog:Properties:App` из appsettings | `"yobaconf"` | Фильтрация в shared workspace |
+| `Env` | runtime, `IWebHostEnvironment.EnvironmentName` | `"Production"` | Отличить prod от staging |
+| `Ver` | runtime, env var `APP_VERSION` | `"0.1.0-42"` | Привязка к билду |
+| `Sha` | runtime, env var `GIT_SHORT_SHA` | `"139fc78"` | Привязка к коммиту |
+| `Host` | runtime, `Environment.MachineName` | `"yobaconf"` | Multi-instance / после restart |
 
 ### Activity-tracking (на каждом событии, автоматом через `ActivityTrackingOptions`)
 

@@ -32,13 +32,18 @@
 
 **Что откатили:** длинные имена `Application`/`Environment`/`CommitSha`/`ClientIP`/`ApiKeyScope` (были в первом проекте policy).
 
-### 3. Enrichment-механика: scope-middleware, не Serilog-enricher
+### 3. Enrichment-механика: `AddSeq(enrichers: [...])`, config-driven `App`
 
-**Причина:** Seq.Extensions.Logging (MEL-native) не имеет встроенных enricher'ов — это ограничение vs Serilog. Два workaround'а:
-- **Scope-middleware** на request-pipeline: каждый request оборачивается в `ILogger.BeginScope` с static-props. Покрывает ~95% volume'а (request-path события).
-- **Startup/background-services** проходят ВНЕ scope'а — у них не будет `App`/`Env`/... Fallback в KQL: фильтр по `SourceContext startswith "YourApp."`.
+**Seq.Extensions.Logging имеет built-in enricher API** (я это первоначально пропустил — `AddSeq` принимает параметр `enrichers: Action<LogEvent>[]`, каждая лямбда срабатывает на каждом CLEF-событии через `evt.AddOrUpdateProperty`). Покрывает 100% volume'а — request-path, startup, background `IHostedService`, lifetime-callbacks — не scope-based, не требует middleware.
 
-**Почему не Serilog:** решение commit'а `cdf9f4b` — остаться на MEL-native (один пакет vs три, не меняем логирующий стек). 95% покрытия scope'ом достаточно; если 5% startup-событий станет критично — точечный upgrade на Serilog (легко, один файл — Program.cs).
+**Разделение источников** статик-полей:
+- **`App`** — из `appsettings.json` секции `YobaLog:Properties`. Единственное поле, которое консьюмер-проект меняет при копировании policy.
+- **`Env`/`Ver`/`Sha`/`Host`** — computed в Program.cs (IWebHostEnvironment, env vars, Environment.MachineName). Boilerplate — копируется как есть.
+- **`Ip`/`User`** — остаются в scope-middleware после `UseAuthentication`, потому что они request-контекстные (enricher без `HttpContext.Current` их не вытянет).
+
+**Почему config-driven для `App`:** консьюмер меняет имя сервиса в одном месте (secondary YobaLog:Properties секция в appsettings.json) вместо копания в Program.cs коде. Секция `YobaLog:Properties` расширяется тэгами по мере надобности — если завтра нужен `Cluster` или `Region`, добавляется туда, enricher автоматом подхватит (не надо менять Program.cs).
+
+**Что откатили:** scope-middleware на все static-props (был в первом проекте policy). Причина отката — неточное понимание capabilities Seq.Extensions.Logging. Enricher-API это правильный MEL-native эквивалент Serilog'овского `Enrich.WithProperty`, открытый у AddSeq из коробки.
 
 ### 4. HttpLogging с skip'ом `/health` + `/ready`
 
