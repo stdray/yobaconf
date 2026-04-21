@@ -115,47 +115,50 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
+      # Secrets go through appleboy/ssh-action's `envs:` passthrough, not
+      # through inline `${{ secrets.X }}` expansion inside the script body.
+      # Inline expansion trips bash variable expansion on any `$` in the
+      # secret value — PBKDF2 hash is literally `pbkdf2$<iter>$<salt>$<hash>`,
+      # so double-quoting substitutes `$<iter>` as positional param `$1`
+      # under `set -u` and aborts the deploy. env-var passthrough side-steps
+      # that: GH Actions puts the raw value into an env var, the action SCPs
+      # the env to the remote shell, and bash references it through a shell
+      # variable whose expanded content is not re-scanned for more dollars.
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          ADMIN_USER: ${{ secrets.YOBACONF_ADMIN_USERNAME }}
+          ADMIN_PASS_HASH: ${{ secrets.YOBACONF_ADMIN_PASSWORD_HASH }}
+          MASTER_KEY: ${{ secrets.YOBACONF_MASTER_KEY }}
+          YOBALOG_URL: ${{ secrets.YOBALOG_SERVER_URL }}
+          YOBALOG_KEY: ${{ secrets.YOBALOG_API_KEY }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
+          envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,YOBALOG_URL,YOBALOG_KEY
           script: |
             set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
             CONTAINER_NAME="yobaconf"
-            # DEPLOY_USERNAME is in the `docker` group → no sudo for docker commands.
+            # DEPLOY_USERNAME is in the `docker` group -> no sudo for docker commands.
             # /opt/yobaconf/data is pre-created during host bootstrap with chown 1654:1654
-            # (chiseled `app` UID) so the container can write its SQLite file on mount — see
-            # doc/deploy.md. Public GHCR package → docker pull is anonymous.
+            # (chiseled `app` UID) so the container can write its SQLite file on mount.
+            # Public GHCR package -> docker pull is anonymous.
             docker pull "$IMAGE"
             docker stop "$CONTAINER_NAME" || true
             docker rm "$CONTAINER_NAME" || true
-            # Host port 8081 allocated per the shared-host convention documented in
-            # infra/Caddyfile.fragment (8080 = yobapub, 8081 = yobaconf, 8082 = yobalog).
-            # Only loopback bind — central Caddy terminates TLS on :443 and reverse-proxies
-            # to 127.0.0.1:8081.
-            # Single-quoted template insertions below. PBKDF2 hash format
-            # is `pbkdf2$<iter>$<salt>$<hash>` — if the value lands inside
-            # a double-quoted bash string, `$<iter>` expands as positional
-            # parameter `$1` + literal digits; under `set -u` that's
-            # "unbound variable" and the whole deploy aborts. Single quotes
-            # disable bash expansion, GH Actions' own template substitution
-            # still runs because ${{ }} is resolved before the script
-            # reaches bash. Safe for every secret here: base64 (master key,
-            # server URL, API key) and pbkdf2 hash have no single-quote
-            # characters; admin username is operator-chosen but single-
-            # quoting it too costs nothing and guards future rotations.
+            # Host port 8081 per the shared-host convention (infra/Caddyfile.fragment).
+            # Only loopback bind -- central Caddy terminates TLS and reverse-proxies.
             docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
               -p 127.0.0.1:8081:8080 \
               -v /opt/yobaconf/data:/app/data \
-              -e Admin__Username='${{ secrets.YOBACONF_ADMIN_USERNAME }}' \
-              -e Admin__PasswordHash='${{ secrets.YOBACONF_ADMIN_PASSWORD_HASH }}' \
-              -e YOBACONF_MASTER_KEY='${{ secrets.YOBACONF_MASTER_KEY }}' \
-              -e YobaLog__ServerUrl='${{ secrets.YOBALOG_SERVER_URL }}' \
-              -e YobaLog__ApiKey='${{ secrets.YOBALOG_API_KEY }}' \
+              -e Admin__Username="$ADMIN_USER" \
+              -e Admin__PasswordHash="$ADMIN_PASS_HASH" \
+              -e YOBACONF_MASTER_KEY="$MASTER_KEY" \
+              -e YobaLog__ServerUrl="$YOBALOG_URL" \
+              -e YobaLog__ApiKey="$YOBALOG_KEY" \
               "$IMAGE"
             docker system prune -a -f
