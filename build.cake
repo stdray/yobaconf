@@ -138,8 +138,8 @@ Task("DockerSmoke")
 				// probe so a mid-boot hang doesn't eat the whole loop. `-o NUL` on Windows because
 				// `curl.exe` doesn't understand `/dev/null`.
 				Arguments = IsRunningOnWindows()
-					? "-fsS --max-time 2 -o NUL http://127.0.0.1:8080/"
-					: "-fsS --max-time 2 -o /dev/null http://127.0.0.1:8080/",
+					? "-fsS --max-time 2 -o NUL http://127.0.0.1:8080/health"
+					: "-fsS --max-time 2 -o /dev/null http://127.0.0.1:8080/health",
 				RedirectStandardError = true,
 				RedirectStandardOutput = true
 			});
