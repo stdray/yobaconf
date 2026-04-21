@@ -11,14 +11,14 @@
 		<PackageReference Include="Microsoft.NET.Test.Sdk" />
 		<PackageReference Include="xunit" />
 		<PackageReference Include="xunit.runner.visualstudio" />
-		<PackageReference Include="FluentAssertions" />
+		<PackageReference Include="AwesomeAssertions" />
 		<PackageReference Include="Hocon" />
 		<PackageReference Include="Hocon.Configuration" />
 	</ItemGroup>
 
 	<ItemGroup>
 		<Using Include="Xunit" />
-		<Using Include="FluentAssertions" />
+		<Using Include="AwesomeAssertions" />
 		<Using Include="YobaConf.Core" />
 	</ItemGroup>
 
