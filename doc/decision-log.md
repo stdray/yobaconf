@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-04-21 — Import converters: JSON / YAML / .env → HOCON
+
+**Решение:** В Phase A добавляется UI-форма "New node from paste" — пользователь вставляет существующий конфиг в одном из трёх форматов, получает HOCON. Три независимых чистых функции в Core: `JsonToHocon(string) -> string`, `YamlToHocon(string) -> string`, `DotenvToHocon(string) -> string`.
+
+**Поддерживаемые форматы в MVP:**
+- **JSON → HOCON: no-op.** JSON — синтаксический subset HOCON. Любой валидный JSON текст уже парсится HOCON-движком as-is. Конвертер = валидация (`JsonDocument.Parse`) + pretty-print (опционально, для нормализации форматирования). Нулевая потеря семантики.
+- **`.env` → HOCON: ручной парсер (~50 строк).** Построчный разбор `KEY=value` с учётом: `#`-комментариев, quoted/unquoted values (одинарные, двойные, без кавычек), escape-последовательностей в double-quotes (`\n`, `\t`, `\\`, `\"`), пустых строк. Ключи валидируются на HOCON-совместимость (буквы/цифры/подчёркивания; если встречаются точки — warn'им, т.к. HOCON интерпретирует как nested path).
+- **YAML → HOCON: `YamlDotNet`.** Стандартная .NET-библиотека для YAML. Парсим в `YamlNode`-tree → walker в HOCON-текст. Anchors и aliases (`&anchor` / `*ref`) **разворачиваются** в конвертации (не сохраняем, HOCON этого не умеет чисто). YAML-теги (`!!int`, `!!str`) игнорируются — HOCON-парсер сам определит тип по литералу.
+
+**Что не поддерживается в MVP:**
+- **TOML → HOCON:** отдельный парсер, редкий case для pet-проектов. Добавим если user-ы попросят.
+- **HCL → HOCON:** HashiCorp-specific; их экосистема не пересекается с нашей целевой.
+- **Properties (Java-style) → HOCON:** встроенный формат HOCON — сам парсер Hocon 2.0.4 умеет читать `.properties`. Можно прикрутить напрямую через `HoconParser.Parse` с `.properties`-source-type, не делать отдельный конвертер.
+- **Сохранение комментариев** при YAML → HOCON: YamlDotNet `DocumentStream`-mode имеет доступ к comment tokens, но их эмиссия в HOCON добавляет complexity без большого value (пользователь потом редактирует текст, перепишет комментарии сам).
+- **Reverse direction (HOCON → YAML/JSON/env):** HOCON → JSON уже есть (serializer в Phase A). HOCON → YAML / HOCON → `.env` — не нужно: HOCON is our edit format, экспорт в другие форматы добавит сурпризы (`.env` не поддерживает nested objects, YAML добавит типов, которые HOCON не имел).
+
+**Почему три независимых функции, а не общий IR:**
+- Каждый формат имеет свои особенности: YAML multi-document streams, dotenv variable expansion (`${OTHER_VAR}`), JSON strict-primitives.
+- Маппинг "всё в `Dictionary<string, object>`" теряет информацию в обратную сторону (например, YAML-число `1.0` vs string `"1.0"` — в словаре оба становятся double, рендер в HOCON неоднозначен).
+- Три функции = 3 × ~50-150 строк кода + независимые тесты. Общий IR = шаред-код + 3 набора edge-case тестов всё равно.
+
+**Use case (почему добавили к Phase A, а не в Phase B CRUD):**
+- Phase A = "dog-food ready" означает "yobaconf хостит свои конфиги". Кто-то должен залить первые ноды. Ручное переписывание `.env` в HOCON = тренировочный барьер.
+- Форма "paste & convert" намного проще, чем полный Monaco/CodeMirror editor. Textarea + format dropdown + Convert button + preview — 1 страница, zero JS-зависимостей (конвертация server-side через htmx).
+- Преимущество отдельной страницы "New from paste" vs "create blank + paste в Monaco": пользователь мгновенно видит, что HOCON-формат получился валидный (preview + подсветка), до того как сохраняет.
+
+**Откатили:** "один универсальный FormatConverter через общий IR". См. выше — не окупает сложность обратного маппинга.
+
+---
+
 ## 2026-04-21 — CodeMirror 6 + Prism вместо Monaco Editor
 
 **Решение:** HOCON-редактор в админке — **CodeMirror 6** (Phase B, editing); для read-only подсветки в дереве + JSON-preview — **Prism.js** (Phase A). Monaco Editor, который был в первоначальной спеке §5, **не берём**. Diff-view поверх CodeMirror через `@codemirror/merge` addon. HOCON-грамматика — ручной порт TextMate grammar из [sabieber/vscode-hocon](https://github.com/sabieber/vscode-hocon) в две формы: Prism component (~80 строк regex) и CodeMirror `StreamLanguage` tokenizer (~150 строк).

@@ -114,9 +114,10 @@
 ## 5. Требования к UI (админка)
 - **Проводник.** Дерево папок и узлов для навигации.
 - **Подсветка синтаксиса (read-only view, Phase A).** [Prism.js](https://prismjs.com/) + кастомный HOCON-компонент (порт из [sabieber/vscode-hocon](https://github.com/sabieber/vscode-hocon) TextMate grammar, ~80 строк регексов). Используется для read-only отображения `RawContent` в дереве и для результирующего JSON в preview-панели. ~20-25 KB bundle.
-- **Редактор кода (edit mode, Phase B).** [CodeMirror 6](https://codemirror.net/) с HOCON `StreamLanguage`-токенайзером (порт той же TextMate-грамматики, ~150 строк). Причина CodeMirror вместо Monaco — decision-log 2026-04-21 "CodeMirror 6 + Prism вместо Monaco Editor". Короткая сводка: bundle 200-400 KB vs Monaco 3-5 MB; тот же набор фич для HOCON-use-case; проще в интеграции (ESM-native, web workers опциональны); совпадает с экосистемой stdray.Obsidian (откуда переиспользуется ConflictSolverService-паттерн).
+- **Редактор кода (edit mode, Phase B).** [CodeMirror 6](https://codemirror.net/) с HOCON `StreamLanguage`-токенайзером (порт той же TextMate-грамматики, ~150 строк). Причина CodeMirror вместо Monaco — decision-log 2026-04-21 "CodeMirror 6 + Prism вместо Monaco Editor".
 - **Diff view.** `@codemirror/merge` (~30 KB addon) — compare текущей версии ноды с любым snapshot'ом из AuditLog (§7).
-- **Предпросмотр.** Окно "результата", где виден итоговый JSON, который получит клиент (Prism-подсветкой JSON grammar из коробки).
+- **Preview-панель резолвинга (Phase A, прямо над деревом или справа).** Для выбранной ноды показывает итоговый JSON после полного §4 pipeline (Fallthrough + variables + includes + substitution). Prism JSON-подсветка (grammar из коробки). ETag + информация о том, какие variables/secrets/includes участвовали — в под-панели для трассировки "почему так собралось".
+- **Import from paste (Phase A, "New node from…" форма).** Textarea + format-dropdown (JSON / YAML / `.env`) + кнопка "Convert" → показывает preview сконвертированного HOCON в правой панели → "Save as node" создаёт новую ноду с этим `RawContent`. Use case: миграция существующих конфигов (k8s `values.yaml`, production `.env`, REST API JSON-responses) без ручного переписывания в HOCON. Конвертеры живут в Core как чистые функции — см. `decision-log.md` 2026-04-21 "Import converters: JSON / YAML / .env".
 - **Хранилище (Vault).** Управление секретами с маскировкой значений (`******`).
 
 ## 6. Масштабируемость и отказоустойчивость
