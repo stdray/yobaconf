@@ -94,6 +94,16 @@ sudo chown 1654:1654 /opt/yobaconf/data    # uid for the chiseled `app` user
 
 The deploy job's `docker run` line already contains `-v /opt/yobaconf/data:/app/data`.
 
+Also ensure `DEPLOY_USERNAME` (typically `stdray`) is in the `docker` group so the CI
+deploy job can run `docker pull/stop/rm/run/prune` without sudo:
+
+```bash
+sudo usermod -aG docker stdray
+# log out + back in so the new group takes effect in the shell / SSH session
+```
+
+Already set up when yobalog bootstrapped the host — included here as a reminder.
+
 ## Step 4 — trigger the deploy
 
 From your local clone of yobaconf:

@@ -112,24 +112,22 @@ jobs:
             set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}/yobaconf-web:${{ needs.publish.outputs.dockerTag }}"
             CONTAINER_NAME="yobaconf-web"
-            PASSWORD="${{ secrets.DEPLOY_PASSWORD }}"
-            run_sudo() { printf '%s\n' "$PASSWORD" | sudo -S -p '' "$@"; }
-            # Package is public (repo is public + GHCR package visibility set to public after
-            # first push): `docker pull` works anonymously, no login → no GHCR_DEPLOY_* PAT.
-            # If the repo ever goes private, reinstate docker login ghcr.io with a read-only PAT.
-            run_sudo docker pull "$IMAGE"
-            run_sudo docker stop "$CONTAINER_NAME" || true
-            run_sudo docker rm "$CONTAINER_NAME" || true
-            run_sudo mkdir -p /opt/yobaconf/data
+            # DEPLOY_USERNAME is in the `docker` group → no sudo for docker commands.
+            # /opt/yobaconf/data is pre-created during host bootstrap with chown 1654:1654
+            # (chiseled `app` UID) so the container can write its SQLite file on mount — see
+            # doc/deploy.md. Public GHCR package → docker pull is anonymous.
+            docker pull "$IMAGE"
+            docker stop "$CONTAINER_NAME" || true
+            docker rm "$CONTAINER_NAME" || true
             # Host port 8081 allocated per the shared-host convention documented in
             # infra/Caddyfile.fragment (8080 = yobapub, 8081 = yobaconf, 8082 = yobalog).
             # Only loopback bind — central Caddy terminates TLS on :443 and reverse-proxies
             # to 127.0.0.1:8081.
-            run_sudo docker run -d \
+            docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
               -p 127.0.0.1:8081:8080 \
               -v /opt/yobaconf/data:/app/data \
               -e YOBACONF_MASTER_KEY="${{ secrets.YOBACONF_MASTER_KEY }}" \
               "$IMAGE"
-            run_sudo docker system prune -a -f
+            docker system prune -a -f
