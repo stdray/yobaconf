@@ -16,7 +16,7 @@
 
 Таблица дублируется в `infra/Caddyfile.fragment` каждого HTTP-serving проекта (комментарий сверху). Это локальный source-of-truth для "какой порт у этого сервиса"; центральный Caddyfile на хосте — глобальная картина.
 
-**Yobalog-specific deviation (для справки):** yobalog в своём fragment'е использует `flush_interval -1` в `reverse_proxy` block для поддержки SSE (`/api/ws/{id}/tail` live-tail). Yobaconf SSE не имеет, поэтому в нашем fragment'е этой директивы нет. Если когда-нибудь yobaconf добавит SSE-endpoint (например, live-updates дерева при edit'ах через htmx) — скопируем паттерн.
+**Fragment parity с yobalog (`flush_interval -1`):** yobalog'овский fragment имеет `flush_interval -1` в `reverse_proxy` block для поддержки SSE на `/api/ws/{id}/tail`. Скопировано pre-emptive'но и в yobaconf fragment — не потому, что SSE уже есть, а потому что: (а) директива — no-op для fully-buffered responses (они flush'атся один раз в конце response'а в любом случае); (б) Phase B admin-UI вероятно получит live-updates через htmx-sse (broadcasting tree edits между открытыми сессиями); (в) structural parity между fragment'ами упрощает чтение central Caddyfile — одно и то же везде, никаких "а у этого сервиса ещё и вот эта штука". Нулевая цена сейчас, исключённый future debug "почему SSE не стримится".
 
 **Причина отказа от docker-compose:**
 - Проекты независимы по lifecycle'у: yobapub релизится на tag `apps`, yobaconf — на `deploy`, yobalog — на `deploy` (в их репо). docker-compose навязывает единый "up/down" для всех — противоречит изолированным CI.

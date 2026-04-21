@@ -18,10 +18,21 @@
 # must not clash on the shared host.
 
 yobaconf.3po.su {
+	reverse_proxy 127.0.0.1:8081 {
+		# Disable response-body buffering at the proxy. YobaConf today has no
+		# SSE endpoints, but admin-UI live updates via htmx-sse are a plausible
+		# Phase B addition (e.g. broadcasting tree edits to other open sessions).
+		# Pre-emptive: the directive is a no-op on fully-buffered responses
+		# (they flush once at end-of-response regardless), so there's no cost
+		# to setting it now and avoiding a future "why doesn't SSE stream?"
+		# debug session. Matches yobalog fragment (commit 464f9b4) — keeping
+		# the two fragments structurally identical makes the central Caddyfile
+		# grep-friendly.
+		flush_interval -1
+	}
+
 	# Caddy auto-provisions a Let's Encrypt cert on the first HTTPS request.
 	# Renewal is automatic (cron-less); cert files live under Caddy's data dir.
-	reverse_proxy 127.0.0.1:8081
-
 	# Forward the real scheme to ASP.NET so UseHttpsRedirection + HSTS +
 	# cookie Secure-flag detection all see https. Caddy sets X-Forwarded-*
 	# automatically, but YobaConf must be configured to trust the loopback
