@@ -14,12 +14,19 @@ infrastructure.
 - [ ] Host with Docker installed, reachable via SSH from GitHub Actions.
 - [ ] Caddy running on the host (installed by yobalog's first-time bootstrap).
 - [ ] DNS: A-record `yobaconf.3po.su` → server public IP.
+- [ ] **Public GitHub repo + public GHCR package.** `publish` job pushes the image to
+  `ghcr.io` using the ephemeral `${{ secrets.GITHUB_TOKEN }}` granted by the workflow's
+  top-level `permissions: packages: write` — no PAT needed. Deploy job on the host
+  `docker pull`-s anonymously, no PAT either. After the first push, flip the package
+  visibility to public once in GHCR UI: GitHub profile → Packages → yobaconf-web →
+  Package settings → Change visibility. If the repo ever goes private again, reinstate
+  `GHCR_DEPLOY_USERNAME` / `GHCR_DEPLOY_TOKEN` secrets + the `docker login ghcr.io`
+  block in the deploy script.
 - [ ] GitHub repository secrets (Settings → Secrets and variables → Actions):
-    - `DEPLOY_HOST` — server hostname or IP.
-    - `DEPLOY_USERNAME` — SSH user (typically same as yobalog's).
-    - `DEPLOY_PASSWORD` — SSH password (sudo-capable on the host).
-    - `GHCR_DEPLOY_USERNAME` / `GHCR_DEPLOY_TOKEN` — GHCR read-token for `docker pull`
-      on the host. Same values yobalog uses.
+    - `DEPLOY_HOST` — server hostname or IP (typically same as yobalog's — `yoba-apps.3po.su`).
+    - `DEPLOY_USERNAME` — SSH user with docker-group membership (typically same as yobalog's, `stdray`).
+    - `DEPLOY_PASSWORD` — SSH password (sudo-capable on the host). SSH is configured with
+      `PasswordAuthentication yes` for CI-friendly flow; `PermitRootLogin no` is enforced.
     - `YOBACONF_MASTER_KEY` — AES-256 master key for Secret encryption.
       **Generate locally**: `openssl rand -base64 32` (Phase C requires this; Phase A
       ignores it but the deploy workflow already passes it through).

@@ -113,15 +113,10 @@ jobs:
             IMAGE="ghcr.io/${{ github.repository }}/yobaconf-web:${{ needs.publish.outputs.dockerTag }}"
             CONTAINER_NAME="yobaconf-web"
             PASSWORD="${{ secrets.DEPLOY_PASSWORD }}"
-            GHCR_USERNAME="${{ secrets.GHCR_DEPLOY_USERNAME }}"
-            GHCR_TOKEN="${{ secrets.GHCR_DEPLOY_TOKEN }}"
             run_sudo() { printf '%s\n' "$PASSWORD" | sudo -S -p '' "$@"; }
-            if [ -n "$GHCR_USERNAME" ] && [ -n "$GHCR_TOKEN" ]; then
-              run_sudo bash -c 'printf "%s\n" "$2" | docker login ghcr.io -u "$1" --password-stdin' -- "$GHCR_USERNAME" "$GHCR_TOKEN"
-            else
-              echo "GHCR_DEPLOY_USERNAME/GHCR_DEPLOY_TOKEN secrets are required for docker login" >&2
-              exit 1
-            fi
+            # Package is public (repo is public + GHCR package visibility set to public after
+            # first push): `docker pull` works anonymously, no login → no GHCR_DEPLOY_* PAT.
+            # If the repo ever goes private, reinstate docker login ghcr.io with a read-only PAT.
             run_sudo docker pull "$IMAGE"
             run_sudo docker stop "$CONTAINER_NAME" || true
             run_sudo docker rm "$CONTAINER_NAME" || true
