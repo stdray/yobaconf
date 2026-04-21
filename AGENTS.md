@@ -27,7 +27,7 @@ When editing: spec changes go to `spec.md`, progress updates to `plan.md`, and a
 
 ## Target stack (planned, not yet scaffolded)
 
-- .NET 10 monolith, Razor Pages SSR + htmx (+ jQuery, optional Alpine.js).
+- .NET 10 monolith, Razor Pages SSR + htmx (+ Alpine.js optional for local state like modals). jQuery is deliberately not in the stack — see `decision-log.md` 2026-04-21 "Drop jQuery from UI stack".
 - SQLite via `linq2db.SQLite.MS` as the single-file row store for `Nodes`, `Variables`, `Secrets`, `ApiKeys`, `AuditLog`. Same stack as yobalog by design — see `decision-log.md` 2026-04-21 "SQLite + linq2db вместо LiteDB".
 - HOCON as the edit format; JSON as the delivery format. Parser = `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 (akkadotnet/HOCON). Phase A.1 gate closed 2026-04-21. **Substitution resolves at parse-time**, not after `.WithFallback` — see pipeline §4 in spec.
 - AES-256 for secret values at rest. Master key — environment variable (`YOBACONF_MASTER_KEY`), never in `appsettings.json` or in the DB.

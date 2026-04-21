@@ -23,7 +23,7 @@
 - **Платформа:** .NET 10.
 - **База данных:** SQLite через `linq2db.SQLite.MS` (синхронно с yobalog — тот же стек, те же паттерны миграций, общий tooling опыт). Single-file `.db` на инстанс, WAL mode. Row-storage — выбор осознанный: модель rigid и flat, NoSQL-гибкости не использует (см. `decision-log.md` 2026-04-21 "SQLite + linq2db вместо LiteDB").
 - **Движок конфигов:** `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 (akkadotnet/HOCON, Apache-2.0). Phase A.1 HOCON-гейт закрыт (`decision-log.md` 2026-04-21). Transitive CVE на `System.Drawing.Common 4.7.0` запинена forward через CPM.
-- **Безопасность:** AES-256-GCM (authenticated encryption) для секретов в БД — шифротекст + IV + версия мастер-ключа (на случай ротации). Мастер-ключ — env var `YOBACONF_MASTER_KEY`, никогда в `appsettings.json` / БД. API-ключи: scoped `RootPath`, токен = ShortGuid (22 chars base64url от 128-bit Guid, 122 бита энтропии), в БД — `sha256(token)` hex + 6-char prefix для UI (тот же формат, что в yobalog).
+- **Безопасность:** AES-256-GCM (authenticated encryption) для секретов в БД — шифротекст + IV + AuthTag + версия мастер-ключа (на случай ротации). **Каждый encrypt использует свежий IV**: `IV = RandomNumberGenerator.GetBytes(12)` перед каждой операцией. IV никогда не переиспользуется для пары `(key, plaintext)` — GCM с повторяющимся IV под одним ключом криптографически сломан (nonce-misuse → plaintext recovery). Тест на уникальность IV обязателен (записать один секрет дважды с одинаковым plaintext → IV разные). Мастер-ключ — env var `YOBACONF_MASTER_KEY`, никогда в `appsettings.json` / БД. API-ключи: scoped `RootPath`, токен = ShortGuid (22 chars base64url от 128-bit Guid, 122 бита энтропии), в БД — `sha256(token)` hex + 6-char prefix для UI (тот же формат, что в yobalog).
 - **Сериализация:** `System.Text.Json`.
 - **Конфигурация самого сервиса:** `appsettings.json`. YobaConf **не может** конфигурироваться через YobaConf — бутстрап-цикл. Мастер-ключ AES — только env var / CI secret.
 - **Workspace-уровень отсутствует:** path-дерево — единственный namespace. Изоляция между проектами/командами — через API-ключи с `RootPath` на нужное поддерево. См. `decision-log.md` 2026-04-21 "Без workspaces в MVP".
@@ -117,7 +117,7 @@
 - **Редактор кода (edit mode, Phase B).** [CodeMirror 6](https://codemirror.net/) с HOCON `StreamLanguage`-токенайзером (порт той же TextMate-грамматики, ~150 строк). Причина CodeMirror вместо Monaco — decision-log 2026-04-21 "CodeMirror 6 + Prism вместо Monaco Editor".
 - **Diff view.** `@codemirror/merge` (~30 KB addon) — compare текущей версии ноды с любым snapshot'ом из AuditLog (§7).
 - **Preview-панель резолвинга (Phase A, прямо над деревом или справа).** Для выбранной ноды показывает итоговый JSON после полного §4 pipeline (Fallthrough + variables + includes + substitution). Prism JSON-подсветка (grammar из коробки). ETag + информация о том, какие variables/secrets/includes участвовали — в под-панели для трассировки "почему так собралось".
-- **Import from paste (Phase A, "New node from…" форма).** Textarea + format-dropdown (JSON / YAML / `.env`) + кнопка "Convert" → показывает preview сконвертированного HOCON в правой панели → "Save as node" создаёт новую ноду с этим `RawContent`. Use case: миграция существующих конфигов (k8s `values.yaml`, production `.env`, REST API JSON-responses) без ручного переписывания в HOCON. Конвертеры живут в Core как чистые функции — см. `decision-log.md` 2026-04-21 "Import converters: JSON / YAML / .env".
+- **Import from paste (Phase A, "New node from…" форма).** Textarea + format-dropdown (JSON / YAML / `.env`) + кнопка "Convert" → показывает preview сконвертированного HOCON в правой панели → "Save as node" создаёт новую ноду с этим `RawContent`. Use case: миграция существующих конфигов (k8s `values.yaml`, production `.env`, REST API JSON-responses) без ручного переписывания в HOCON. Конвертеры живут в Core как чистые функции — см. `decision-log.md` 2026-04-21 "Import converters: JSON / YAML / .env". **Cap на размер входа:** 1 MiB. Превышение → 413 Payload Too Large с человеческим сообщением. Без cap'а большой YAML (vulgar 50 MiB) может съесть память YamlDotNet'а до OOM.
 - **Хранилище (Vault).** Управление секретами с маскировкой значений (`******`).
 
 ## 6. Масштабируемость и отказоустойчивость
@@ -146,7 +146,7 @@
 ## 9. Фронтенд и UI-технологии
 - **Движок.** ASP.NET Core Razor Pages (SSR).
 - **Интерактивность.** htmx (динамическая подгрузка контента без перезагрузки страницы).
-- **Скрипты.** jQuery (для сложных UI-манипуляций) + Alpine.js (опционально, для простого локального стейта — например, открытия модалок).
+- **Скрипты.** Собственный TS в `ts/admin.ts` (минимум); Alpine.js **опционально** для простого локального стейта (модалки, toggle'ы). **jQuery не используется** — для YobaConf scope (дерево + CodeMirror + пара модалок) не даёт того, что не даст Alpine + htmx. См. `decision-log.md` 2026-04-21 "Drop jQuery from UI stack".
 - **Общие компоненты (shared library):**
     - Авторизация (Login/Logout).
     - Общий макет (Layout) на готовой component-библиотеке поверх Tailwind (DaisyUI / Flowbite) с тёмной темой из коробки (`dark`/`night`/`business`). Кастомизация запрещена. Конкретная библиотека выбирается в первом frontend-спринте синхронно с YobaLog.

@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-04-21 — Drop jQuery from UI stack; htmx + Alpine.js + vanilla TS only
+
+**Решение:** YobaConf фронт — htmx (server-driven HTML swaps) + Alpine.js (опциональный локальный state для модалок/toggle'ов) + собственный TS в `ts/admin.ts` (минимум). **jQuery не используется.** В spec §9 это теперь зафиксировано как negative invariant.
+
+**Причина:**
+- YobaConf UI-scope маленький: дерево путей + CodeMirror редактор (Phase B) + пара модалок (conflict resolution, import-paste). Ничего из этого не требует jQuery.
+- 2026 фронт-ландшафт: jQuery на фазе legacy. Современные браузеры закрыли почти все use case'ы, ради которых jQuery был стандартом (`querySelector`, `fetch`, CSS animations, ES2022 syntax). Новое приложение на jQuery = сразу tech debt.
+- htmx + Alpine покрывают 100% наших потребностей: htmx для server-side обновлений, Alpine для локальных UI-стейтов (modal open/close, tab switching, `x-show`/`x-data`). Alpine API проще jQuery — reactive declarations вместо императивных обработчиков.
+- Bundle-размер: Alpine ~13 KB min, htmx ~14 KB min. jQuery был бы +30 KB для ничего.
+- Соответствие с yobalog, который тоже без jQuery (собственный TS в `ts/admin.ts` + htmx). Два sibling-проекта = одна фронт-страна.
+
+**Откатили:** первоначальную формулировку §9 "jQuery (для сложных UI-манипуляций) + Alpine.js (опционально)" — скопировано бездумно из какого-то референса. jQuery "для сложных манипуляций" в наш scope не попадает. Pre-emptive cleanup: удалим упоминание до того, как кто-то подключит `<script src="jquery-3.x.js">` в Layout.
+
+**Не исключаем навсегда:** если когда-нибудь появится интеграция с legacy-библиотекой, которая требует jQuery (напр. старый datepicker), — пересмотрим с явным use case'ом в decision-log'е. Сейчас такого use case нет.
+
+---
+
+## 2026-04-21 — Master-key AES rotation: lazy re-encrypt on access (draft procedure)
+
+**Решение (черновик для Phase C):** когда мастер-ключ AES ротируется:
+1. Новый ключ попадает в env как `YOBACONF_MASTER_KEY_V2` (в дополнение к `YOBACONF_MASTER_KEY_V1`, который остаётся). Каждый ключ имеет свою `KeyVersion`-строку (напр. `"v1"`, `"v2"`).
+2. Приложение на старте читает оба env var'а; держит их в `IKeyring` (сервис в DI) с lookup по `KeyVersion`.
+3. При **чтении** Secret — смотрим `KeyVersion` записи, берём из keyring'а нужный ключ, расшифровываем.
+4. При **записи** (создание новой записи или обычный UPDATE через UI) — всегда используем **текущий** ключ (`v2` после ротации). `KeyVersion` записи становится `"v2"`.
+5. **Lazy re-encrypt:** старые записи с `KeyVersion = "v1"` остаются под старым ключом до их следующего UPDATE. Не перекодируем proактивно — даёт ротацию без downtime, без миграционных скриптов.
+6. Когда все активные секреты имеют `KeyVersion = "v2"` (можно проверить SQL: `SELECT COUNT(*) FROM Secrets WHERE KeyVersion = 'v1' AND IsDeleted = 0` — 0), старый env var удаляется из деплоя. Keyring остаётся с одним ключом; AuditLog-записи под старым ключом становятся недоступны без расшифровки (это acceptable — история >6 месяцев редко нужна, и если нужна — можно временно поднять старый ключ в env).
+
+**Почему lazy, не eager:** proactive re-encrypt job требует простой (читаем-пишем все секреты в одну транзакцию) или runtime координации (иначе midway-rotation читатель увидит одну запись старую, другую новую и запутается, если кеширует keyring). Lazy = zero-downtime, ценой "old key must live until last update on it" — но это стандартный trade-off envelope encryption.
+
+**Открытые вопросы для имплементации в Phase C:**
+- Форма команды "force re-encrypt all secrets now" в админке — для случая когда нужно принудительно погасить старый ключ.
+- Алерт в self-observability: "N секретов под `KeyVersion = vX`, старый ключ в env всё ещё нужен" — чтобы не забыть почистить.
+- Формат `KeyVersion` — строка? timestamp? sequence? Кандидат: `"vYYYY-MM"` (привязка к месяцу ротации) для человекочитаемости.
+
+**Откатили:** идею "eager re-encrypt job" для простоты. YAGNI пока не появится конкретный compliance-сценарий.
+
+---
+
 ## 2026-04-21 — Import converters: JSON / YAML / .env → HOCON
 
 **Решение:** В Phase A добавляется UI-форма "New node from paste" — пользователь вставляет существующий конфиг в одном из трёх форматов, получает HOCON. Три независимых чистых функции в Core: `JsonToHocon(string) -> string`, `YamlToHocon(string) -> string`, `DotenvToHocon(string) -> string`.
