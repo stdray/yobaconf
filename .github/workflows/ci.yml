@@ -141,6 +141,8 @@ jobs:
               --restart unless-stopped \
               -p 127.0.0.1:8081:8080 \
               -v /opt/yobaconf/data:/app/data \
+              -e Admin__Username="${{ secrets.YOBACONF_ADMIN_USERNAME }}" \
+              -e Admin__PasswordHash="${{ secrets.YOBACONF_ADMIN_PASSWORD_HASH }}" \
               -e YOBACONF_MASTER_KEY="${{ secrets.YOBACONF_MASTER_KEY }}" \
               -e YobaLog__ServerUrl="${{ secrets.YOBALOG_SERVER_URL }}" \
               -e YobaLog__ApiKey="${{ secrets.YOBALOG_API_KEY }}" \
