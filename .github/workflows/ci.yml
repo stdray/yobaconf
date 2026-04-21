@@ -136,15 +136,26 @@ jobs:
             # infra/Caddyfile.fragment (8080 = yobapub, 8081 = yobaconf, 8082 = yobalog).
             # Only loopback bind — central Caddy terminates TLS on :443 and reverse-proxies
             # to 127.0.0.1:8081.
+            # Single-quoted template insertions below. PBKDF2 hash format
+            # is `pbkdf2$<iter>$<salt>$<hash>` — if the value lands inside
+            # a double-quoted bash string, `$<iter>` expands as positional
+            # parameter `$1` + literal digits; under `set -u` that's
+            # "unbound variable" and the whole deploy aborts. Single quotes
+            # disable bash expansion, GH Actions' own template substitution
+            # still runs because ${{ }} is resolved before the script
+            # reaches bash. Safe for every secret here: base64 (master key,
+            # server URL, API key) and pbkdf2 hash have no single-quote
+            # characters; admin username is operator-chosen but single-
+            # quoting it too costs nothing and guards future rotations.
             docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
               -p 127.0.0.1:8081:8080 \
               -v /opt/yobaconf/data:/app/data \
-              -e Admin__Username="${{ secrets.YOBACONF_ADMIN_USERNAME }}" \
-              -e Admin__PasswordHash="${{ secrets.YOBACONF_ADMIN_PASSWORD_HASH }}" \
-              -e YOBACONF_MASTER_KEY="${{ secrets.YOBACONF_MASTER_KEY }}" \
-              -e YobaLog__ServerUrl="${{ secrets.YOBALOG_SERVER_URL }}" \
-              -e YobaLog__ApiKey="${{ secrets.YOBALOG_API_KEY }}" \
+              -e Admin__Username='${{ secrets.YOBACONF_ADMIN_USERNAME }}' \
+              -e Admin__PasswordHash='${{ secrets.YOBACONF_ADMIN_PASSWORD_HASH }}' \
+              -e YOBACONF_MASTER_KEY='${{ secrets.YOBACONF_MASTER_KEY }}' \
+              -e YobaLog__ServerUrl='${{ secrets.YOBALOG_SERVER_URL }}' \
+              -e YobaLog__ApiKey='${{ secrets.YOBALOG_API_KEY }}' \
               "$IMAGE"
             docker system prune -a -f
