@@ -4,8 +4,9 @@
 		<ProjectReference Include="..\YobaConf.Core\YobaConf.Core.csproj" />
 	</ItemGroup>
 
-	<!-- Frontend is Release-only from MSBuild. Debug relies on `bun run dev` (via run_dev.ps1)
-	     so dotnet watch doesn't fight the bun watcher for wwwroot/ output. -->
+	<!-- Frontend is Release-only from MSBuild. Debug relies on the Cake `Dev` target (or
+	     a manual `bun run dev`) so dotnet watch doesn't fight the bun watcher for wwwroot/
+	     output, and Rider's long-lived Web process doesn't block the bun-build output-copy step. -->
 	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'">
 		<Exec Command="bun install --frozen-lockfile" WorkingDirectory="$(MSBuildProjectDirectory)" />
 		<Exec Command="bun run build" WorkingDirectory="$(MSBuildProjectDirectory)" />
