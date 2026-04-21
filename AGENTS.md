@@ -9,7 +9,9 @@ Toolchain, build pipeline, CI, and scaffolded Core / Web / Tests projects are in
 ## Build entry points
 
 - **Local:** `./build.sh --target=Test` (bash) or `pwsh ./build.ps1 -Target Test` (PowerShell). Bootstrap restores Cake + GitVersion tools, then runs the Cake task.
-- **Cake tasks:** Clean → Restore → Version (GitVersion) → Build → Test → Docker → DockerSmoke → DockerPush. Locally most useful: `--target=Test` (no Docker) or `--target=Docker` (builds image). `--target=DockerPush --dockerPush=true` requires `GHCR_USERNAME` + `GHCR_TOKEN` env or prior `docker login`.
+- **Cake tasks:** Clean → Restore → Version (GitVersion) → Build → Test → Docker → DockerSmoke → DockerPush. Plus a standalone `Dev` task for the watcher loop.
+- **Dev loop:** `./build.sh --target=Dev` / `pwsh ./build.ps1 -Target Dev` runs `bun run dev` (ts + css watchers via concurrently) and `dotnet watch` in parallel, both streaming to the current terminal. Ctrl+C kills both trees. Replaces the older two-window `run_dev.ps1`.
+- **Other local targets:** `--target=Docker` builds the image locally; `--target=DockerPush --dockerPush=true` requires `GHCR_USERNAME` + `GHCR_TOKEN` env or prior `docker login`.
 - **CI:** mirrors `./build.sh --target=Test` for the fast lane; on `main` push + `deploy` tag push also runs `--target=DockerPush` with ghcr.io credentials.
 - **Deploy:** **manual tag `deploy` only**. `git tag deploy && git push origin deploy --force` (force needed because the tag gets re-used). Main-push publishes the image but does NOT SSH-deploy — prevents accidental prod updates on every merge.
 

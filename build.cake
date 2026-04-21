@@ -134,7 +134,12 @@ Task("DockerSmoke")
 			System.Threading.Thread.Sleep(1000);
 			var curlExit = StartProcess("curl", new ProcessSettings
 			{
-				Arguments = "-fsSL -o /dev/null http://localhost:8080/",
+				// `-f` drops on any 4xx/5xx; `-s` silent; `-S` shows errors; `--max-time 2` bounds each
+				// probe so a mid-boot hang doesn't eat the whole loop. `-o NUL` on Windows because
+				// `curl.exe` doesn't understand `/dev/null`.
+				Arguments = IsRunningOnWindows()
+					? "-fsS --max-time 2 -o NUL http://127.0.0.1:8080/"
+					: "-fsS --max-time 2 -o /dev/null http://127.0.0.1:8080/",
 				RedirectStandardError = true,
 				RedirectStandardOutput = true
 			});
@@ -203,6 +208,51 @@ Task("DockerPush")
 
 	Information("Pushing {0}", targetImage);
 	DockerPush(targetImage);
+});
+
+// Single-window dev loop: bun watchers (ts + css via concurrently) and dotnet watch stream to
+// the same terminal. Ctrl+C kills both process trees. No two-window ps1 wrapper needed.
+// Uses System.Diagnostics.Process directly (Cake's IProcess lacks HasExited / tree-kill).
+Task("Dev")
+	.Does(() =>
+{
+	var webDir = MakeAbsolute(Directory("./src/YobaConf.Web")).FullPath;
+
+	var frontend = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("bun", "run dev")
+	{
+		WorkingDirectory = webDir,
+		UseShellExecute = false,
+	});
+	var backend = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("dotnet", "watch --project src/YobaConf.Web")
+	{
+		UseShellExecute = false,
+	});
+
+	if (frontend == null || backend == null)
+		throw new CakeException("Failed to start dev processes (bun / dotnet).");
+
+	void KillAll()
+	{
+		try { if (!frontend.HasExited) frontend.Kill(entireProcessTree: true); } catch { }
+		try { if (!backend.HasExited) backend.Kill(entireProcessTree: true); } catch { }
+	}
+
+	Console.CancelKeyPress += (_, e) =>
+	{
+		e.Cancel = true;
+		KillAll();
+	};
+
+	Information("dev loop started (bun watchers + dotnet watch). Ctrl+C to stop.");
+
+	// Poll until either child exits, then tear down the other. entireProcessTree=true covers
+	// concurrently's ts/css sub-bun-s and dotnet watch's app child.
+	while (!frontend.HasExited && !backend.HasExited)
+	{
+		System.Threading.Thread.Sleep(500);
+	}
+
+	KillAll();
 });
 
 Task("Default")
