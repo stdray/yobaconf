@@ -14,6 +14,7 @@
 		<PackageReference Include="AwesomeAssertions" />
 		<PackageReference Include="Hocon" />
 		<PackageReference Include="Hocon.Configuration" />
+		<PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -24,6 +25,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\YobaConf.Core\YobaConf.Core.csproj" />
+		<ProjectReference Include="..\..\src\YobaConf.Web\YobaConf.Web.csproj" />
 	</ItemGroup>
 
 </Project>
