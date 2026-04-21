@@ -95,8 +95,29 @@ public static class YobaConfApp
 		app.UseAuthentication();
 		app.UseAuthorization();
 
-		// Liveness probe — public (Docker healthcheck, Cake DockerSmoke).
+		// Liveness probe — public (Docker healthcheck, Cake DockerSmoke). No dependencies.
+		// Returns 200 as long as the process is up and serving HTTP; use /ready for
+		// "can-serve-requests" semantics (DB reachable).
 		app.MapGet("/health", () => Results.Ok(new { status = "healthy" })).AllowAnonymous();
+
+		// Readiness probe — exercises the config store (DB reachability). Returns 503 when
+		// `IConfigStore.ListNodePaths()` throws so orchestrators can evict the instance from
+		// load-balancer pools while startup migrations or disk issues resolve. Anonymous —
+		// probes don't carry auth and a failing probe must not require credentials to observe.
+		app.MapGet("/ready", (IConfigStore store) =>
+		{
+			try
+			{
+				_ = store.ListNodePaths();
+				return Results.Ok(new { status = "ready" });
+			}
+			catch (Exception ex)
+			{
+				return Results.Json(
+					new { status = "not ready", error = ex.Message },
+					statusCode: StatusCodes.Status503ServiceUnavailable);
+			}
+		}).AllowAnonymous();
 
 		// Build provenance — public. GitVersion injects via Docker env vars; local dev
 		// falls through to dev/local/empty.

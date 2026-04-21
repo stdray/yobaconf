@@ -15,7 +15,7 @@
 		<h2 class="text-sm uppercase opacity-70 mb-2">Raw HOCON</h2>
 		@if (Model.NodeExists)
 		{
-			<pre class="bg-base-200 p-3 rounded text-xs overflow-auto min-h-40" data-testid="node-raw">@Model.RawContent</pre>
+			<pre class="bg-base-200 p-3 rounded text-xs overflow-auto min-h-40" data-testid="node-raw"><code class="language-hocon">@Model.RawContent</code></pre>
 		}
 		else
 		{
@@ -56,10 +56,3 @@
 	</section>
 </div>
 
-@section Scripts {
-	<script>
-		// Re-run Prism after HTML render — the JSON preview is inside a <code> block marked
-		// with language-json. Prism auto-highlights everything marked `.language-*` on load.
-		if (window.Prism) { window.Prism.highlightAll(); }
-	</script>
-}
