@@ -126,10 +126,14 @@ jobs:
             run_sudo docker stop "$CONTAINER_NAME" || true
             run_sudo docker rm "$CONTAINER_NAME" || true
             run_sudo mkdir -p /opt/yobaconf/data
+            # Host port 8081 allocated per the shared-host convention documented in
+            # infra/Caddyfile.fragment (8080 = yobapub, 8081 = yobaconf, 8082 = yobalog).
+            # Only loopback bind — central Caddy terminates TLS on :443 and reverse-proxies
+            # to 127.0.0.1:8081.
             run_sudo docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
-              -p 127.0.0.1:8080:8080 \
+              -p 127.0.0.1:8081:8080 \
               -v /opt/yobaconf/data:/app/data \
               -e YOBACONF_MASTER_KEY="${{ secrets.YOBACONF_MASTER_KEY }}" \
               "$IMAGE"

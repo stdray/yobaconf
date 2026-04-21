@@ -161,13 +161,26 @@
 - **CodeMirror 6 + HOCON.** В Phase B добавится `ts/hocon-mode.ts` — `StreamLanguage`-токенайзер HOCON (ручной порт из [sabieber/vscode-hocon](https://github.com/sabieber/vscode-hocon) TextMate grammar, ~150 строк). StreamLanguage хватает для highlighting + basic indent; полноценный Lezer grammar с AST — откладывается до use-case'а semantic-фич (go-to-include-target, autocomplete по `${var}`).
 - **Prism + HOCON.** В Phase A добавится `ts/prism-hocon.ts` — кастомный Prism language component из той же TextMate-базы (~80 строк regex). Для read-only отображения в дереве и JSON-preview (JSON grammar у Prism из коробки).
 
-## 11. Self-observability
+## 11. Развёртывание и HTTPS
+- **Docker-образ + независимый deploy.** YobaConf деплоится собственным CI (build.cake → DockerPush → `docker run` через SSH). Никакого docker-compose в общем lifecycle'е с другими сервисами — projects независимы и выкатываются по отдельным тегам `deploy`. Паттерн зеркалит yobapub: image идёт в ghcr.io, SSH-деплой на хосте делает `docker pull` + `docker run -d` с уникальным именем контейнера.
+- **Host-port convention.** Контейнер YobaConf биндится на `127.0.0.1:8081` (loopback only — no direct public exposure). Ports per project on the shared host:
+    - `8080` — yobapub (existing, pre-Caddy era)
+    - `8081` — yobaconf
+    - `8082` — yobalog (reserved для их deploy)
+    - следующие свободные — для future services
+  Allocation-таблица продублирована в `infra/Caddyfile.fragment` (rooted здесь же в репо) для быстрого grep'а при добавлении нового сервиса.
+- **HTTPS через Caddy (host-level reverse proxy).** Central Caddy на хосте терминирует TLS на `:443`, proxy'ит к loopback-портам проектов. Выбран вместо nginx+certbot: Let's Encrypt renewal встроен (cron-less), конфиг — одна строка на сервис, reload без downtime. Подробности выбора — `decision-log.md` 2026-04-21 "Caddy on host as HTTPS terminator".
+- **Caddyfile-fragment живёт в `infra/Caddyfile.fragment`** в репо как reference (не consumed Caddy'ом напрямую). Центральный `/etc/caddy/Caddyfile` собирается из этих fragment'ов (вручную или через отдельный infra-repo — TBD). Renewal автоматический; cert-файлы хранятся в `/var/lib/caddy/`.
+- **Forwarded-headers wiring в ASP.NET.** Caddy устанавливает `X-Forwarded-Proto=https` / `X-Forwarded-For`. YobaConf конфигурируется `app.UseForwardedHeaders(new ForwardedHeadersOptions { KnownProxies = { IPAddress.Loopback } })` (Phase A deploy bullet). Без этого `HttpContext.Request.IsHttps == false` за proxy, `UseHttpsRedirection` уходит в loop, cookie `Secure`-flag рассчитывается неправильно.
+- **Первичный bootstrap хоста** (делается один раз вручную): `apt install caddy` + начальный Caddyfile + `systemctl enable caddy` + firewall-правила на 80/443. После этого добавление нового сервиса = (1) DNS A-запись на server IP, (2) docker run на выделенный loopback-port, (3) строка в центральном Caddyfile, (4) `caddy reload`. Шаги (2)-(4) автоматизируемы через `./build.sh --target=DockerPush` + deploy-job.
+
+## 12. Self-observability
 - Все server-side события (изменения нод, доступ по API-ключам, ошибки резолвинга, `403` по граничным путям) YobaConf пишет в YobaLog через CLEF endpoint. Rate-limiting в MVP не реализован (Phase E).
 - API-ключ YobaConf → YobaLog хранится в `appsettings.json` самого YobaConf (**не** в YobaConf-ноде — иначе бутстрап-цикл, см. §2).
 - Отдельный workspace в YobaLog под YobaConf (например, `$system/yobaconf` или выделенный `yobaconf-ops`) — не смешиваем с user workspaces.
 - Рекурсия невозможна по конструкции: YobaLog не зависит от YobaConf, события YobaConf не могут триггерить обращение к YobaConf при записи.
 
-## 12. Локализация
+## 13. Локализация
 - **Стартовый язык:** английский. Русский — отложен, каркас предусматривает.
 - **Механизм.** `IStringLocalizer` (ASP.NET Core Localization) + `.resx` ресурсы на culture. Ключи в коде — короткие английские идентификаторы.
 - **Конвенция ключей.** Dot-notation (`page.nodes.breadcrumbs`, `errors.cycle_detected`).

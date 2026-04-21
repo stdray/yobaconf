@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-04-21 — Caddy on host as HTTPS terminator; projects deploy independently (no docker-compose)
+
+**Решение:** HTTPS для YobaConf + yobapub + yobalog + любых будущих HTTP-сервисов на общем хосте реализуется через **Caddy**, установленный на хост как systemd-сервис. Каждый проект деплоится **независимо** через собственный CI (SSH + `docker run -d -p 127.0.0.1:PORT:8080`); Caddy на `:443` реверс-прокси'т на loopback-порт. Никакого docker-compose не вводим.
+
+**Host-port convention (единая для всех проектов на шаред-хосте):**
+- `127.0.0.1:8080` — yobapub (существующий, до-Caddy эра, остаётся)
+- `127.0.0.1:8081` — yobaconf
+- `127.0.0.1:8082` — yobalog (reserved)
+- Следующие свободные — для новых сервисов
+
+Таблица дублируется в `infra/Caddyfile.fragment` каждого HTTP-serving проекта (комментарий сверху). Это локальный source-of-truth для "какой порт у этого сервиса"; центральный Caddyfile на хосте — глобальная картина.
+
+**Причина отказа от docker-compose:**
+- Проекты независимы по lifecycle'у: yobapub релизится на tag `apps`, yobaconf — на `deploy`, yobalog — на `deploy` (в их репо). docker-compose навязывает единый "up/down" для всех — противоречит изолированным CI.
+- Каждый проект в своей репе имеет свой workflow, свой Dockerfile, свой deploy-trigger. Общая compose-orchestration = пересечение responsibilities между репами → либо один проект "главный" (кто владеет compose.yml?), либо отдельный infra-репо (это отдельное решение C, см. ниже).
+- Текущий yobapub-паттерн "CI → SSH → `docker pull + docker run`" **уже работает**. Добавлять compose поверх = рефакторинг без фактической выгоды.
+
+**Причина Caddy vs nginx+certbot (текущий yobapub-паттерн):**
+- **Встроенный Let's Encrypt.** nginx требует отдельный certbot + cron'а на renewal. Caddy — автоматический ACME, renewal cron-less, сертификаты обновляются hot без downtime.
+- **Конфиг на новый сервис = 3 строки.** nginx-новый-server-блок = 20-30 строк с managed-by-Certbot-секцией. Caddy = `host.example.com { reverse_proxy 127.0.0.1:PORT }`.
+- **Одноразовый host-setup.** `apt install caddy` + один Caddyfile — готово. Дальше reload на каждое изменение.
+- **yobapub остаётся на nginx** — миграция не обязательна. nginx config уже работает, cert выпущен. Когда/если yobapub будет пересетапиться — перейдёт на общий Caddy. Пока — live-and-let-live.
+
+**Причина Caddy vs Traefik:**
+- Traefik docker-label-discovery плохо ложится на "каждый проект независимо делает `docker run`" — лейблы рассыпаны по CI-скриптам разных репо.
+- Для твоего "5 сервисов, меняются редко" Caddyfile (статичный список) проще и яснее.
+- Caddy ~15MB vs Traefik ~30MB (маргинально).
+
+**Причина Caddy на хосте, а не в контейнере:**
+- Контейнер-Caddy с `--network host` или публикацией `:80/:443` работает, но добавляет ещё одну docker-единицу в жизненный цикл.
+- systemd Caddy — установка один раз, запускается system-wide, видит `localhost:*` других сервисов без разговоров о docker-networks.
+- Обратная сторона: config живёт на хосте (`/etc/caddy/Caddyfile`), не в git напрямую. Решается через infra-repo или через выкладку `Caddyfile.fragment`-ов из каждого проекта + concat-скрипт (TBD).
+
+**Откатили:**
+- **docker-compose для HTTPS-оркестрации.** Противоречит independent-lifecycle паттерну.
+- **ASP.NET self-hosted TLS через `LettuceEncrypt` NuGet.** Работает, но cert-renewal требует рестарт процесса (brief downtime каждые 60 дней) + per-service cert-state → не шарится между апгрейдами контейнера.
+- **Cloudflare edge-TLS.** Free tier покрывает, но привязывает к DNS-терминированному Cloudflare-домену. Не хочу вендор-лок на бесплатный-пока тариф.
+
+**Открытые вопросы для implementation (first-time host bootstrap):**
+- Как централизовать Caddyfile: (1) отдельный infra-репо с concat-скриптом из fragment'ов; (2) hand-edit `/etc/caddy/Caddyfile` на сервере; (3) Ansible/скрипт в одном из репо, владеет всеми fragment'ами. Решается в момент первого реального deploy на сервер. До того — fragment'ы лежат в каждом проекте как reference.
+- Forwarded-headers wiring в ASP.NET: `UseForwardedHeaders` с `KnownProxies = { IPAddress.Loopback }`. Добавляется в `YobaConfApp.Configure()` перед `UseHttpsRedirection`. Bullet в Phase A plan.
+- Caddy access-log shipping в yobalog: простейшая опция — пока собирается локально файлом, после Phase F yobalog'а подключаем через CLEF/OTLP shipper. До того — `/var/log/caddy/*.access.log` ротируется и живёт.
+
+---
+
 ## 2026-04-21 — OpenTelemetry self-emission: gated on yobalog Phase F
 
 **Решение:** YobaConf получает **только** self-emission (эмитит OTel-spans своего `ResolvePipeline` + HTTP endpoint'ов + SQLite writes). OTLP-ingestion **не делаем** — YobaConf не log-store, этому не место. Metrics — тоже non-goal (территория Prometheus/Grafana). Реализуется как Phase C.5 между Phase C (secrets) и Phase D (client SDKs). Gate через `OpenTelemetry:Enabled` в `appsettings.json` (default `false` для pet-scale — включается когда реально нужно трассировать).
@@ -340,7 +385,7 @@
 
 ## 2026-04-21 — Единственное направление зависимости: YobaConf → YobaLog
 
-**Решение:** YobaConf пишет свои события в YobaLog через CLEF endpoint (self-observability, spec §11). YobaLog не зависит от YobaConf — в YobaLog `spec.md` §1 зафиксировано, что его конфиг приходит только из `appsettings.json`. API-ключ YobaConf → YobaLog хранится в `appsettings.json` самого YobaConf, **не** в YobaConf-ноде.
+**Решение:** YobaConf пишет свои события в YobaLog через CLEF endpoint (self-observability, spec §12). YobaLog не зависит от YobaConf — в YobaLog `spec.md` §1 зафиксировано, что его конфиг приходит только из `appsettings.json`. API-ключ YobaConf → YobaLog хранится в `appsettings.json` самого YobaConf, **не** в YobaConf-ноде.
 
 **Причина:** если YobaLog начнёт читать конфиг из YobaConf, получим цикл: YobaConf при старте пишет событие в YobaLog → YobaLog хочет узнать retention-policy → идёт в YobaConf → YobaConf ещё не поднят. Разрыв цикла — на стороне YobaLog: его контракт уже исключает зависимость от YobaConf.
 

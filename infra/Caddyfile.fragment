@@ -1,0 +1,44 @@
+# Caddyfile fragment for YobaConf.
+#
+# This file is NOT consumed directly by Caddy — it's a reference fragment to
+# paste into the central host Caddyfile (managed out-of-repo, likely in an
+# infra-repo alongside fragments from yobapub, yobalog, and other HTTPS-
+# exposed services). Keeping a copy here means whoever redeploys YobaConf
+# can see the full HTTPS surface in one place instead of SSH-ing to grep
+# /etc/caddy/Caddyfile.
+#
+# Host-side port convention (grows as services are added — keep this
+# comment block synchronised with the central Caddyfile):
+#   127.0.0.1:8080  yobapub.3po.su       (existing, pre-Caddy era)
+#   127.0.0.1:8081  yobaconf.3po.su      (this service)
+#   127.0.0.1:8082  yobalog.3po.su       (reserved; yobalog Phase A when deployed)
+#
+# Each service's CI (`.github/workflows/ci.yml` deploy job) pins its host
+# port via `-p 127.0.0.1:PORT:8080`. The port belongs to the project and
+# must not clash on the shared host.
+
+yobaconf.3po.su {
+	# Caddy auto-provisions a Let's Encrypt cert on the first HTTPS request.
+	# Renewal is automatic (cron-less); cert files live under Caddy's data dir.
+	reverse_proxy 127.0.0.1:8081
+
+	# Forward the real scheme to ASP.NET so UseHttpsRedirection + HSTS +
+	# cookie Secure-flag detection all see https. Caddy sets X-Forwarded-*
+	# automatically, but YobaConf must be configured to trust the loopback
+	# proxy (`ForwardedHeaders` middleware with KnownProxies = [127.0.0.1]).
+	# Phase A deployment bullet tracks wiring on the app side.
+
+	# Compression at the edge.
+	encode gzip zstd
+
+	log {
+		# Caddy access log as JSON — parseable by yobalog (once it's live) via
+		# a tiny shipper or ingested through OTLP after Phase F. Until then it
+		# rotates locally under /var/log/caddy/.
+		output file /var/log/caddy/yobaconf.access.log {
+			roll_size 50mb
+			roll_keep 5
+		}
+		format json
+	}
+}
