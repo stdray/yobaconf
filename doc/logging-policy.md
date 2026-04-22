@@ -1,12 +1,32 @@
-# Logging policy
+# Observability policy
 
-Политика логирования для всех сервисов стека, шиппящих события в yobalog. yobaconf — reference implementation; пути/имена ниже из его tree. Консьюмер берёт этот файл, подставляет своё имя сервиса и своё `appsettings.json` и получает совместимый с остальным стеком лог-поток.
+Политика для всех сервисов стека, шиппящих **логи и спаны** в yobalog. yobaconf — reference implementation; пути/имена ниже из его tree. Консьюмер берёт этот файл, подставляет своё имя сервиса и свои `appsettings.json` + GitHub secrets — получает совместимый с остальным стеком observability-поток (логи на Seq-compat + OTLP-трейсы).
+
+Файл исторически называется `logging-policy.md`; после Phase C.5 покрывает и tracing. Переименовать можно; cross-refs и commit'ы ссылаются на старое имя, менять лень.
+
+## Два канала, один workspace
+
+- **Логи** (CLEF) ← `Seq.Extensions.Logging` → `{host}/compat/seq/api/events/raw` (Seq-compat namespace yobalog'а).
+- **Трейсы** (OTLP HTTP/Protobuf) ← `OpenTelemetry.Exporter.OpenTelemetryProtocol` → `{host}/v1/traces`.
+- Оба — в один yobalog workspace (`apps-prod`). Auth — один и тот же `X-Seq-ApiKey` header, один и тот же ключ (yobalog's OTLP ingestion reuses Seq-compat auth).
+
+### Что куда писать
+
+| Тип события | Канал | Зачем |
+|---|---|---|
+| Stage/latency/status внутри одного request'а (resolve pipeline, SQL, include-chain) | **Trace (span)** | Waterfall + attributes → диагностика "что долго" / "что сломалось" без reconstructуров по message'ам |
+| Cross-service correlation (user → bot → yobaconf → ...) | **Trace (W3C traceparent)** | Один TraceId через всю цепочку — склеивается в yobalog автоматом |
+| Business event (node upserted, api-key rotated, admin login) | **Log (Info)** | Audit trail + retention policy по `@l` |
+| Error / unusual path (include cycle, bad apikey scope, DB write failure) | **Log (Warning / Error)** | Alerts + stack trace через `@x` |
+| Access log (Method/Path/Status/Duration per request) | **Trace (HTTP root span, automatic)** | `AspNetCoreInstrumentation` уже эмитит; дублировать в логах = 2x volume |
+
+**Правило:** per-request per-stage латентность — span-attributes, не log-fields. Одноразовые события бизнес-уровня — логи.
 
 ## Целевая инфраструктура
 
-- **Workspace в yobalog — один общий** (`apps-prod`). Различение по CLEF-полю `App`. Причина: yobalog MVP не умеет cross-workspace KQL-запросы (каждый workspace = свой `.db`, query engine per-WS). Общий WS — единственный способ склеить события по `TraceId` между сервисами (user→bot→yobaconf→...). Изоляция через retention-policies, не через WS-разделение.
-- **Транспорт**: CLEF over HTTP → yobalog Seq-compat endpoint `{host}/compat/seq/api/events/raw`, auth через `X-Seq-ApiKey` header. См. yobalog `doc/spec.md` §2 для non-.NET language compatibility.
+- **Workspace в yobalog — один общий** (`apps-prod`). Различение по CLEF-полю `App` в логах и `service.name` resource-атрибуту в трейсах. Причина: yobalog MVP не умеет cross-workspace KQL-запросы (каждый workspace = свой `.db`, query engine per-WS). Общий WS — единственный способ склеить события по `TraceId` между сервисами. Изоляция через retention-policies, не через WS-разделение.
 - **Propagation**: W3C `traceparent` header. В .NET встроено в `HttpClient` + ASP.NET Core из коробки — ничего дополнительно настраивать не надо, TraceId'ы между сервисами склеятся автоматом.
+- **Non-.NET**: стандартный OTel SDK с `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` + `OTEL_EXPORTER_OTLP_HEADERS=X-Seq-ApiKey=...`. См. yobalog `doc/spec.md` §2.
 
 ## .NET-сервис — wiring
 
@@ -15,34 +35,47 @@
 ```xml
 <!-- Directory.Packages.props -->
 <PackageVersion Include="Seq.Extensions.Logging" Version="9.0.0" />
+<PackageVersion Include="OpenTelemetry" Version="1.15.1" />
+<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.1" />
+<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.1" />
+<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
 ```
 
 ```xml
 <!-- <ProjectName>.Web.csproj -->
 <ItemGroup>
   <PackageReference Include="Seq.Extensions.Logging" />
+  <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+  <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+  <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
 </ItemGroup>
 ```
 
-### Program.cs
+### Program.cs (logs side)
 
 ```csharp
 using Seq.Extensions.Logging;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Stamp TraceId/SpanId on every event. W3C traceparent propagation is on
-//    by default in HttpClient + ASP.NET Core — cross-service call chains
-//    join automatically.
+// 1. Stamp TraceId/SpanId on every log event. W3C traceparent propagation is
+//    on by default in HttpClient + ASP.NET Core — cross-service call chains
+//    join automatically, and log events land on the trace waterfall via their
+//    TraceId in yobalog.
 builder.Logging.Configure(o => o.ActivityTrackingOptions =
     ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
 
 // 2. Seq-compat sink with static enrichers. AddSeq's `enrichers:` parameter
-//    accepts `Action<LogEvent>[]` — each lambda fires on EVERY event
-//    (including startup, background, IHostedService) and can stamp
+//    accepts `Action<EnrichingEvent>[]` — each lambda fires on EVERY event
+//    (startup, background, IHostedService — all of it) and stamps
 //    CLEF-properties via evt.AddOrUpdateProperty. This is the MEL-native
-//    equivalent of Serilog's Enrich.WithProperty — 100% coverage, no scope
-//    middleware needed for static identity.
+//    equivalent of Serilog's Enrich.WithProperty — 100% coverage without
+//    scope middleware.
+//
+//    Note: the `EnrichingEvent` type is the public API of the callback;
+//    Seq.Extensions.Logging's internal `LogEvent` is NOT exposed and casting
+//    to `Action<LogEvent>` will not compile. README examples use `evt` as
+//    shorthand and can mislead.
 //
 //    Gated on non-empty ServerUrl: dev without user-secrets / integration
 //    tests see ServerUrl="" and skip registration (console-only logging).
@@ -52,25 +85,114 @@ if (!string.IsNullOrWhiteSpace(seqUrl))
 {
     // Config-driven static props come from YobaLog:Properties subsection.
     // Consumer projects override ONLY `App` — others are runtime-computed.
-    var configProps = builder.Configuration.GetSection("YobaLog:Properties")
+    var props = builder.Configuration.GetSection("YobaLog:Properties")
         .GetChildren()
-        .ToDictionary(c => c.Key, c => (object?)c.Value);
+        .Where(c => !string.IsNullOrEmpty(c.Value))
+        .ToDictionary(c => c.Key, c => (object)c.Value!);
 
-    configProps["Env"]  = builder.Environment.EnvironmentName;
-    configProps["Ver"]  = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
-    configProps["Sha"]  = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local";
-    configProps["Host"] = Environment.MachineName;
+    props["Env"]  = builder.Environment.EnvironmentName;
+    props["Ver"]  = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
+    props["Sha"]  = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local";
+    props["Host"] = Environment.MachineName;
 
     builder.Logging.AddSeq(
         serverUrl: seqUrl,
         apiKey: seqKey,
-        enrichers: configProps
-            .Select(kv => (Action<LogEvent>)(evt => evt.AddOrUpdateProperty(kv.Key, kv.Value)))
-            .ToArray());
+        enrichers:
+        [
+            .. props.Select(kv => (Action<EnrichingEvent>)(evt => evt.AddOrUpdateProperty(kv.Key, kv.Value))),
+        ]);
 }
+```
 
-// 3. Structured access-log — skip probe endpoints (health/ready hit every
-//    few seconds from Docker healthcheck / k8s / Caddy; pure noise).
+### Program.cs (tracing side — Phase C.5)
+
+Обычно в `ConfigureServices` (или inline в Program.cs — роли не играет). Gate чисто config-driven — никаких `IsEnvironment("Testing")` проверок (plan.md invariant).
+
+```csharp
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+
+// Phase C.5: OTLP traces → yobalog /v1/traces. Gate: Enabled + non-empty
+// endpoint. Default appsettings has both off, so dev/tests skip registration;
+// prod turns both on via env vars injected from GitHub secrets. ASP.NET Core
+// root HTTP span comes automatically from AspNetCoreInstrumentation —
+// domain code emits child spans via its own ActivitySource (see below).
+var otelEnabled = builder.Configuration.GetValue("OpenTelemetry:Enabled", false);
+var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
+if (otelEnabled && !string.IsNullOrWhiteSpace(otlpEndpoint))
+{
+    var serviceName = builder.Configuration["OpenTelemetry:ServiceName"] ?? "<your-app>";
+    var serviceVersion = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
+    var apiKey = builder.Configuration["YobaLog:ApiKey"] ?? string.Empty;
+
+    builder.Services.AddOpenTelemetry()
+        .ConfigureResource(r => r.AddService(serviceName, serviceVersion: serviceVersion))
+        .WithTracing(tracing => tracing
+            .AddSource(MyActivitySources.DomainSourceName, MyActivitySources.StorageSourceName)
+            .AddAspNetCoreInstrumentation(opts =>
+            {
+                // Skip probe noise — /health /ready get hit every few seconds by
+                // Docker healthcheck / Caddy probe / k8s readiness; filling
+                // yobalog's spans.db with these is pure waste.
+                opts.Filter = ctx =>
+                    !ctx.Request.Path.StartsWithSegments("/health")
+                    && !ctx.Request.Path.StartsWithSegments("/ready");
+            })
+            .AddOtlpExporter(o =>
+            {
+                o.Endpoint = new Uri(otlpEndpoint);
+                o.Protocol = OtlpExportProtocol.HttpProtobuf;
+                o.Headers = $"X-Seq-ApiKey={apiKey}";
+            }));
+}
+```
+
+### ActivitySource скелет
+
+`Core/Observability/ActivitySources.cs` — const-имена для `AddSource(...)` + static instances для instrumentation call-site'ов:
+
+```csharp
+using System.Diagnostics;
+
+namespace MyApp.Core.Observability;
+
+// Keep sources granular by DOMAIN AREA, not per-method. 2-3 sources is typical
+// (one per subsystem — e.g. Resolve + Storage.Sqlite for yobaconf; Ingestion +
+// Query + Storage + Retention for yobalog). Every extra source = one extra
+// line in AddSource(...) registration, and listener-lookup cost on each span
+// start.
+public static class MyActivitySources
+{
+    public const string DomainSourceName = "MyApp.Domain";
+    public const string StorageSourceName = "MyApp.Storage";
+
+    public static readonly ActivitySource Domain = new(DomainSourceName);
+    public static readonly ActivitySource Storage = new(StorageSourceName);
+}
+```
+
+Call-site pattern (domain code):
+
+```csharp
+using var activity = MyActivitySources.Domain.StartActivity("myapp.resolve");
+activity?.SetTag("myapp.input-id", inputId);
+// ... do work ...
+activity?.SetTag("myapp.output-size", result.Length);
+```
+
+`StartActivity` возвращает null когда listener не подключён (Enabled=false, тесты без OTel-wiring) → `using (null)` — no-op, zero cost. Tags — по OTel-convention: `<namespace>.<attribute>` snake-case-dot.
+
+### Access-log + per-request enrichment (logs side, остаётся нужным)
+
+```csharp
+// Structured access-log — skip probe endpoints (health/ready hit every
+// few seconds from Docker healthcheck / k8s / Caddy; pure noise). Note:
+// trace root span ALREADY captures Method/Path/Status/Duration via
+// AspNetCoreInstrumentation. HttpLogging is kept for the audit-log use
+// case (who hit what when, filterable by KQL outside trace UI) and for
+// when tracing is off.
 builder.Services.AddHttpLogging(o =>
 {
     o.LoggingFields = HttpLoggingFields.RequestMethod
@@ -81,20 +203,16 @@ builder.Services.AddHttpLogging(o =>
     // No bodies (noise + potential PII + CLEF size bloat).
 });
 
-// ... your own service wiring (AddRazorPages, AddAuthentication, etc.) ...
-
 var app = builder.Build();
 
-// Access-log applies only for non-probe paths.
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/health")
         && !ctx.Request.Path.StartsWithSegments("/ready"),
     branch => branch.UseHttpLogging());
 
-// Per-request enrichment: `Ip` always, `User` only when authenticated.
-// Static props (App/Env/Ver/Sha/Host) are already on the event via the
-// AddSeq enrichers above — this middleware only adds what's request-scope-
-// dynamic. Runs after UseAuthentication so ctx.User is populated.
+// Per-request scope: `Ip` always, `User` only when authenticated. Static
+// props (App/Env/Ver/Sha/Host) are already on the event via AddSeq enrichers
+// above — this only adds request-scope-dynamic fields.
 app.UseAuthentication();
 app.UseAuthorization();
 app.Use(async (ctx, next) =>
@@ -111,10 +229,6 @@ app.Use(async (ctx, next) =>
     using (logger.BeginScope(scopeProps))
         await next();
 });
-
-// ... rest of your pipeline (UseEndpoints, MapRazorPages, etc.) ...
-
-app.Run();
 ```
 
 ### appsettings.json
@@ -134,6 +248,11 @@ app.Run();
     "Properties": {
       "App": "<your-app-name>"
     }
+  },
+  "OpenTelemetry": {
+    "Enabled": false,
+    "ServiceName": "<your-app-name>",
+    "OtlpEndpoint": ""
   }
 }
 ```
@@ -143,7 +262,7 @@ app.Run();
 - `Microsoft.AspNetCore: Warning` — давит Kestrel-шум (`Request starting HTTP/2 GET ...` / `Request finished ...` — 2 event/request, без фильтра это 50% volume'а).
 - `Microsoft.AspNetCore.HttpLogging: Information` — `UseHttpLogging` пишет в эту категорию, её **не** должен давить Warning-фильтр выше.
 
-Секция `YobaLog:Properties` — **единственное место, где меняется per-project конфиг** (на консьюмер-сервисе: `"App": "yobapub"` / `"App": "kpvotes"` / etc.). Остальной wiring — копия. Если нужны дополнительные постоянные тэги (тип сервиса, region, cluster, ...) — добавляются сюда же, enricher подхватит автоматом.
+Per-project конфиг — только `YobaLog:Properties:App` и `OpenTelemetry:ServiceName` (оба должны матчить — это одно и то же имя сервиса для логов и трейсов). Если нужны дополнительные постоянные лог-тэги (region/cluster) — добавляются в `YobaLog:Properties`, enricher подхватит автоматом. Соответствующие resource-атрибуты трейсов — через `.ConfigureResource(r => r.AddAttributes(...))` в `AddOpenTelemetry` блоке.
 
 ### Покрытие enricher-подхода
 
@@ -188,25 +307,52 @@ Naming — **PascalCase, короткое и однозначное**. Seq/CLEF 
 | `StatusCode` | auto |
 | `Duration` | auto |
 
-### Domain-specific
+Дублирует root HTTP span из `AspNetCoreInstrumentation` частично (span имеет `http.request.method` / `url.path` / `http.response.status_code` / duration из span-timestamp'а). Оставлять ли HttpLogging после включения трейсов — выбор trade-off'а:
+- **Оставить**: audit-log через KQL остаётся работать когда tracing off / sampled out, независимо от span-retention policy.
+- **Убрать**: один источник истины, меньше volume в shared workspace, но grep по /Path у пользователей через KQL ломается при sampled-out трейсах.
 
-Стампить в code-path'ах, где поле имеет смысл. Пример для yobaconf (`/v1/conf/{path}` resolve):
+Рекомендация: оставить HttpLogging с narrow-set (`Method|Path|StatusCode|Duration`) — volume маленький, audit ценится.
+
+### Domain-specific — через span-attributes, не через логи
+
+**Было** (Phase-A early draft): один info-лог `Resolved {Path} -> {Status} in {ElapsedMs}ms ...` с 10 domain-полями на каждый request. **Откатили** в пользу трейсов (решение commit `da7d53c`, Phase C.5) — span'ы покрывают те же 5 use-case'ов (slow-start diagnosis / 304-vs-200 / include-chain / DB-regression / cross-service correlation) строго лучше: per-stage breakdown, waterfall-UI, automatic cross-service TraceId.
+
+Правильный паттерн domain-observability теперь:
 
 ```csharp
-logger.LogInformation(
-    "Resolved {Path} -> {Resolved} ({Status}) in {ElapsedMs}ms, etag={ETag}, key={Key}, scope={Scope}, incs={Incs}, depth={Depth}",
-    requestedPath, resolvedPath, 200, elapsedMs, etag, apiKey.Prefix, apiKey.RootPath, includesCount, fallthroughDepth);
+using var activity = MyActivitySources.Domain.StartActivity("myapp.resolve");
+activity?.SetTag("myapp.path", requestedPath);
+
+using (MyActivitySources.Domain.StartActivity("myapp.fallthrough-lookup"))
+{
+    bestMatch = FindBestMatch(requestedPath);
+}
+activity?.SetTag("myapp.resolved", bestMatch.Path);
+
+using (MyActivitySources.Domain.StartActivity("myapp.parse"))
+{
+    parsed = Parse(combined);
+}
+// ... etc
 ```
 
-Message-template parser Seq/CLEF распакует `{Path}`, `{Resolved}`, и т.д. в CLEF-properties автоматом. Одно Info-событие с 10 полями лучше чем 10 строк логов с одним полем.
+Результат в yobalog'е — waterfall `myapp.resolve` с 4+ child-span'ами, каждый со своей длительностью и tags. Info-логи остаются для **discrete business events** (node created / api-key rotated / admin login succeeded) — не для per-request детализации.
 
-## Что НЕ логировать
+Полезные span-attribute соглашения:
+- `<app>.<noun>` для identifier'ов (`yobaconf.path`, `yobaconf.resolved`)
+- `<app>.<noun>.count` для числовых agregate (`yobaconf.includes.count`, `yobaconf.variables.count`)
+- `db.system = sqlite`, `db.operation = select` / `update` — стандартные OTel semantic-conventions для DB spans (опционально, но удобно для cross-service уни-фильтров)
+- **НЕ** стампить персональные данные в tags (tags индексируются, дорого чистить).
+
+## Что НЕ логировать / НЕ трейсить
 
 - **Headers** — не включаем в `HttpLoggingFields`. Там `Authorization`, `Cookie`, `X-*-ApiKey`.
 - **Bodies (request/response)** — шум + potential PII + раздувание CLEF-batch'а.
-- **Probe endpoints** — `/health`, `/ready` skip'аются через `UseWhen` ветвление.
-- **Stack traces на Info** — только Warning+ (структурированный exception в CLEF через `@x`).
-- **Plaintext API-ключи / пароли / AES-мастер-ключ** — даже в error-events. Стамповать только prefix (6 chars) или хэш.
+- **Probe endpoints** — `/health`, `/ready` skip'аются через `UseWhen` в HttpLogging middleware + через `AspNetCoreInstrumentation.Filter` в OTel trace-wiring. Оба фильтра нужны: разные уровни pipeline'а.
+- **Stack traces на Info** — только Warning+ (структурированный exception в CLEF через `@x` / в span через `activity.SetStatus(Error, ex.Message)`).
+- **Plaintext API-ключи / пароли / AES-мастер-ключ / значения секретов** — ни в логах, ни в span-attributes. Стамповать только prefix (6 chars) или хэш.
+- **Per-request access-event как Info-лог** — это задача span'а (automatic root HTTP span из AspNetCoreInstrumentation). Не дублировать.
+- **Per-stage durations как логи** — это задача child-span'ов. Логи = discrete events, трейсы = per-request timeline.
 
 ## Retention-policies (workspace-level, в yobalog UI)
 
@@ -236,7 +382,9 @@ dotnet user-secrets set "YobaLog:ApiKey"    "<dev-workspace-key>"               
 
 **Секреты в repo settings** (Settings → Secrets and variables → Actions):
 - `YOBALOG_SERVER_URL` — `https://yobalog.3po.su/compat/seq` (без `/api/events/raw` — провайдер допишет)
-- `YOBALOG_API_KEY` — API-key с ingest-scope на workspace `apps-prod`, создаётся в yobalog admin UI, plaintext показывается один раз
+- `YOBALOG_API_KEY` — API-key с ingest-scope на workspace `apps-prod`, создаётся в yobalog admin UI, plaintext показывается один раз. Переиспользуется для OTLP-traces (yobalog использует тот же `X-Seq-ApiKey` header на `/v1/traces`).
+- `<APP>_OTEL_ENABLED` — literal `"true"` чтобы включить tracing; любое другое / пусто = off.
+- `<APP>_OTLP_ENDPOINT` — `https://yobalog.3po.su/v1/traces` (полный URL, без автоматического дописывания; OTel exporter не трогает path).
 
 **Проброс в `docker run` через `appleboy/ssh-action` envs:-passthrough**. Не инлайнить секреты через `${{ secrets.X }}` в body скрипта — bash раскрывает `$` в значении секрета (PBKDF2-хэш формата `pbkdf2$100000$...` ломается под `set -u` как "unbound variable $1"). Правильный паттерн:
 
@@ -246,18 +394,22 @@ dotnet user-secrets set "YobaLog:ApiKey"    "<dev-workspace-key>"               
   env:
     YOBALOG_URL: ${{ secrets.YOBALOG_SERVER_URL }}
     YOBALOG_KEY: ${{ secrets.YOBALOG_API_KEY }}
+    OTEL_ENABLED: ${{ secrets.MYAPP_OTEL_ENABLED }}
+    OTLP_ENDPOINT: ${{ secrets.MYAPP_OTLP_ENDPOINT }}
     # ... other secrets
   with:
     host: ${{ secrets.DEPLOY_HOST }}
     username: ${{ secrets.DEPLOY_USERNAME }}
     password: ${{ secrets.DEPLOY_PASSWORD }}
-    envs: YOBALOG_URL,YOBALOG_KEY
+    envs: YOBALOG_URL,YOBALOG_KEY,OTEL_ENABLED,OTLP_ENDPOINT
     script: |
       set -euo pipefail
       docker run -d \
         --name "<your-app>" \
         -e YobaLog__ServerUrl="$YOBALOG_URL" \
         -e YobaLog__ApiKey="$YOBALOG_KEY" \
+        -e OpenTelemetry__Enabled="$OTEL_ENABLED" \
+        -e OpenTelemetry__OtlpEndpoint="$OTLP_ENDPOINT" \
         ...
 ```
 
@@ -274,7 +426,9 @@ Language-specific compat-матрица — yobalog `doc/spec.md` §2. Field-tax
 
 ## Cross-refs
 
-- yobalog `doc/spec.md` §1-2 — endpoint contract, client compatibility matrix
-- yobaconf `doc/decision-log.md` "Self-observability via Seq.Extensions.Logging" — почему MEL-native, не Serilog
-- yobaconf `doc/decision-log.md` "Logging policy: shared workspace, field taxonomy" — обоснование решений этого файла
-- yobaconf `doc/deploy.md` Step 6 — конкретная пошаговая выкладка секретов для одного сервиса
+- yobalog `doc/spec.md` §1-2 — endpoint contract (Seq-compat + OTLP), client compatibility matrix
+- yobaconf `doc/decision-log.md` "Self-observability via Seq.Extensions.Logging" — почему MEL-native, не Serilog (logs stack)
+- yobaconf `doc/decision-log.md` "Logging policy: shared workspace, field taxonomy" — обоснование решений по полям/workspace
+- yobaconf `doc/decision-log.md` "Phase C.5 OTel self-emission: applied, gate removed" — tracing wiring + ActivitySource rationale + gate policy
+- yobaconf `doc/deploy.md` Step 6+7 — конкретная пошаговая выкладка секретов (logs + OTLP) для одного сервиса
+- yobaconf `plan.md` invariant "Никакого IsEnvironment('Testing') в production-коде" — почему все gates config-driven
