@@ -12,6 +12,7 @@ using YobaConf.Core.Bindings;
 using YobaConf.Core.Observability;
 using YobaConf.Core.Security;
 using YobaConf.Core.Storage;
+using YobaConf.Web.Endpoints;
 
 namespace YobaConf.Web;
 
@@ -199,6 +200,8 @@ public static class YobaConfApp
 			await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 			return Results.Redirect("/Login");
 		});
+
+		app.MapConfEndpoint();
 
 		app.MapRazorPages();
 	}

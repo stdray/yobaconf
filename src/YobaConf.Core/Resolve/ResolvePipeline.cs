@@ -36,7 +36,10 @@ public sealed class ResolvePipeline
 		_encryptor = encryptor;
 	}
 
-	public ResolveOutcome Resolve(IReadOnlyDictionary<string, string> tagVector)
+	public ResolveOutcome Resolve(IReadOnlyDictionary<string, string> tagVector) =>
+		Resolve(tagVector, allowedKeyPrefixes: null);
+
+	public ResolveOutcome Resolve(IReadOnlyDictionary<string, string> tagVector, IReadOnlyList<string>? allowedKeyPrefixes)
 	{
 		ArgumentNullException.ThrowIfNull(tagVector);
 
@@ -44,6 +47,8 @@ public sealed class ResolvePipeline
 		root?.SetTag("yobaconf.tag-vector.count", tagVector.Count);
 
 		var candidates = CandidateLookup(tagVector);
+		if (allowedKeyPrefixes is { Count: > 0 })
+			candidates = FilterByPrefix(candidates, allowedKeyPrefixes);
 		root?.SetTag("yobaconf.matched.count", candidates.Count);
 
 		var groups = GroupByKey(candidates);
@@ -73,6 +78,20 @@ public sealed class ResolvePipeline
 	{
 		using var span = ActivitySources.Resolve.StartActivity("candidate-lookup");
 		return _store.FindMatching(tagVector);
+	}
+
+	static List<Binding> FilterByPrefix(IReadOnlyList<Binding> candidates, IReadOnlyList<string> prefixes)
+	{
+		using var span = ActivitySources.Resolve.StartActivity("prefix-filter");
+		var filtered = new List<Binding>(candidates.Count);
+		foreach (var b in candidates)
+			foreach (var p in prefixes)
+				if (b.KeyPath.StartsWith(p, StringComparison.Ordinal))
+				{
+					filtered.Add(b);
+					break;
+				}
+		return filtered;
 	}
 
 	static Dictionary<string, List<Binding>> GroupByKey(IReadOnlyList<Binding> candidates)
