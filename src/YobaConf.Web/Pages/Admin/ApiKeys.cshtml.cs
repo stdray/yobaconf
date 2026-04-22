@@ -45,7 +45,7 @@ public sealed class ApiKeysModel : PageModel
 
 		var prefixes = ParsePrefixes(allowedPrefixes);
 
-		var created = _admin.Create(tagSet, prefixes, description.Trim(), _clock.GetUtcNow());
+		var created = _admin.Create(tagSet, prefixes, description.Trim(), _clock.GetUtcNow(), User.Identity?.Name ?? "system");
 		NewlyCreatedToken = created.Plaintext;
 		Load();
 		return Page();
@@ -60,7 +60,7 @@ public sealed class ApiKeysModel : PageModel
 			return Page();
 		}
 
-		if (!_admin.SoftDelete(id.Value, _clock.GetUtcNow()))
+		if (!_admin.SoftDelete(id.Value, _clock.GetUtcNow(), User.Identity?.Name ?? "system"))
 			ErrorMessage = $"Key {id.Value} not found.";
 
 		Load();

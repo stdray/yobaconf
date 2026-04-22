@@ -5,6 +5,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using Microsoft.Extensions.Options;
+using YobaConf.Core.Audit;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Observability;
 
@@ -94,9 +95,10 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 		return matched;
 	}
 
-	public UpsertOutcome Upsert(Binding binding)
+	public UpsertOutcome Upsert(Binding binding, string actor = "system")
 	{
 		ArgumentNullException.ThrowIfNull(binding);
+		ArgumentNullException.ThrowIfNull(actor);
 		Slug.RequireKeyPath(binding.KeyPath);
 
 		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.upsert-binding");
@@ -104,6 +106,7 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 		activity?.SetTag("yobaconf.key-path", binding.KeyPath);
 
 		using var db = Open();
+		using var tx = db.BeginTransaction();
 		var tagSetJson = binding.TagSet.CanonicalJson;
 		var ts = binding.UpdatedAt.ToUnixTimeMilliseconds();
 		var contentHash = ComputeContentHash(binding);
@@ -112,43 +115,107 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 			.FirstOrDefault(r => r.TagSetJson == tagSetJson && r.KeyPath == binding.KeyPath && r.IsDeleted == 0);
 
 		var aliasesJson = SerializeAliases(binding.Aliases);
+		UpsertOutcome result;
+		AuditAction action;
+		string? oldValueForAudit;
+		string? oldHashForAudit;
 		if (existing is null)
 		{
 			var row = ToRow(binding, tagSetJson, contentHash, ts, aliasesJson, id: 0);
 			var newId = Convert.ToInt64(db.InsertWithIdentity(row));
 			var inserted = binding with { Id = newId, ContentHash = contentHash };
-			return new UpsertOutcome(inserted, OldHash: null);
+			result = new UpsertOutcome(inserted, OldHash: null);
+			action = AuditAction.Created;
+			oldValueForAudit = null;
+			oldHashForAudit = null;
+		}
+		else
+		{
+			var oldHash = existing.ContentHash;
+			db.GetTable<BindingRow>()
+				.Where(r => r.Id == existing.Id)
+				.Set(r => r.ValuePlain, binding.ValuePlain)
+				.Set(r => r.Ciphertext, binding.Ciphertext)
+				.Set(r => r.Iv, binding.Iv)
+				.Set(r => r.AuthTag, binding.AuthTag)
+				.Set(r => r.KeyVersion, binding.KeyVersion)
+				.Set(r => r.Kind, binding.Kind.ToString())
+				.Set(r => r.ContentHash, contentHash)
+				.Set(r => r.UpdatedAt, ts)
+				.Set(r => r.AliasesJson, aliasesJson)
+				.Update();
+			result = new UpsertOutcome(binding with { Id = existing.Id, ContentHash = contentHash }, OldHash: oldHash);
+			action = AuditAction.Updated;
+			oldValueForAudit = BindingValueForAudit(existing);
+			oldHashForAudit = oldHash;
 		}
 
-		var oldHash = existing.ContentHash;
-		db.GetTable<BindingRow>()
-			.Where(r => r.Id == existing.Id)
-			.Set(r => r.ValuePlain, binding.ValuePlain)
-			.Set(r => r.Ciphertext, binding.Ciphertext)
-			.Set(r => r.Iv, binding.Iv)
-			.Set(r => r.AuthTag, binding.AuthTag)
-			.Set(r => r.KeyVersion, binding.KeyVersion)
-			.Set(r => r.Kind, binding.Kind.ToString())
-			.Set(r => r.ContentHash, contentHash)
-			.Set(r => r.UpdatedAt, ts)
-			.Set(r => r.AliasesJson, aliasesJson)
-			.Update();
-
-		var updated = binding with { Id = existing.Id, ContentHash = contentHash };
-		return new UpsertOutcome(updated, OldHash: oldHash);
+		SqliteAuditLogStore.Append(db, new AuditLogRow
+		{
+			At = ts,
+			Actor = actor,
+			Action = action.ToString(),
+			EntityType = AuditEntityType.Binding.ToString(),
+			TagSetJson = tagSetJson,
+			KeyPath = binding.KeyPath,
+			OldValue = oldValueForAudit,
+			NewValue = BindingValueForAudit(binding),
+			OldHash = oldHashForAudit,
+			NewHash = contentHash,
+		});
+		tx.Commit();
+		return result;
 	}
 
-	public bool SoftDelete(long id, DateTimeOffset at)
+	public bool SoftDelete(long id, DateTimeOffset at, string actor = "system")
 	{
+		ArgumentNullException.ThrowIfNull(actor);
 		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.soft-delete-binding");
 		using var db = Open();
-		var affected = db.GetTable<BindingRow>()
+		using var tx = db.BeginTransaction();
+		var existing = db.GetTable<BindingRow>().FirstOrDefault(r => r.Id == id && r.IsDeleted == 0);
+		if (existing is null) return false;
+
+		var ts = at.ToUnixTimeMilliseconds();
+		db.GetTable<BindingRow>()
 			.Where(r => r.Id == id && r.IsDeleted == 0)
 			.Set(r => r.IsDeleted, 1)
-			.Set(r => r.UpdatedAt, at.ToUnixTimeMilliseconds())
+			.Set(r => r.UpdatedAt, ts)
 			.Update();
-		return affected > 0;
+
+		SqliteAuditLogStore.Append(db, new AuditLogRow
+		{
+			At = ts,
+			Actor = actor,
+			Action = AuditAction.Deleted.ToString(),
+			EntityType = AuditEntityType.Binding.ToString(),
+			TagSetJson = existing.TagSetJson,
+			KeyPath = existing.KeyPath,
+			OldValue = BindingValueForAudit(existing),
+			NewValue = null,
+			OldHash = existing.ContentHash,
+			NewHash = null,
+		});
+		tx.Commit();
+		return true;
 	}
+
+	// For audit payload: Plain bindings serialize their JSON-encoded value verbatim;
+	// Secret bindings serialize "secret|<b64-ciphertext>|<b64-iv>|<b64-authtag>|<keyversion>"
+	// so rollback can re-insert without re-encrypting. Plaintext never enters AuditLog.
+	static string? BindingValueForAudit(Binding b) => b.Kind switch
+	{
+		BindingKind.Plain => b.ValuePlain,
+		BindingKind.Secret => $"secret|{Convert.ToBase64String(b.Ciphertext ?? [])}|{Convert.ToBase64String(b.Iv ?? [])}|{Convert.ToBase64String(b.AuthTag ?? [])}|{b.KeyVersion ?? ""}",
+		_ => null,
+	};
+
+	static string? BindingValueForAudit(BindingRow r) => r.Kind switch
+	{
+		"Plain" => r.ValuePlain,
+		"Secret" => $"secret|{Convert.ToBase64String(r.Ciphertext ?? [])}|{Convert.ToBase64String(r.Iv ?? [])}|{Convert.ToBase64String(r.AuthTag ?? [])}|{r.KeyVersion ?? ""}",
+		_ => null,
+	};
 
 	static BindingRow ToRow(Binding b, string tagSetJson, string contentHash, long ts, string? aliasesJson, long id) => new()
 	{

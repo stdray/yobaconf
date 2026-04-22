@@ -23,9 +23,9 @@ public interface IApiKeyStore
 
 public interface IApiKeyAdmin
 {
-	ApiKeyCreated Create(TagSet requiredTags, IReadOnlyList<string>? allowedKeyPrefixes, string description, DateTimeOffset at);
+	ApiKeyCreated Create(TagSet requiredTags, IReadOnlyList<string>? allowedKeyPrefixes, string description, DateTimeOffset at, string actor = "system");
 
 	IReadOnlyList<ApiKeyInfo> ListActive();
 
-	bool SoftDelete(long id, DateTimeOffset at);
+	bool SoftDelete(long id, DateTimeOffset at, string actor = "system");
 }

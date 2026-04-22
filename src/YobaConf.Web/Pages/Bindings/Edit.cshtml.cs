@@ -126,7 +126,7 @@ public sealed class EditModel : PageModel
 			};
 		}
 
-		var outcome = _admin.Upsert(candidate);
+		var outcome = _admin.Upsert(candidate, User.Identity?.Name ?? "system");
 
 		// Post-save conflict detector: if another active binding shares KeyPath at the same
 		// TagCount with an incomparable TagSet, flag it. Resolver would 409 on any request

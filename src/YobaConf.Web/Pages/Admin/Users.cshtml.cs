@@ -34,7 +34,7 @@ public sealed class UsersModel : PageModel
 
 		try
 		{
-			_admin.Create(username.Trim(), password, _clock.GetUtcNow());
+			_admin.Create(username.Trim(), password, _clock.GetUtcNow(), User.Identity?.Name ?? "system");
 			SuccessMessage = $"Created user '{username.Trim()}'.";
 		}
 		catch (InvalidOperationException ex)
@@ -64,7 +64,7 @@ public sealed class UsersModel : PageModel
 			return Page();
 		}
 
-		if (_admin.Delete(username))
+		if (_admin.Delete(username, User.Identity?.Name ?? "system"))
 			SuccessMessage = $"Deleted user '{username}'.";
 		else
 			ErrorMessage = $"User '{username}' not found.";

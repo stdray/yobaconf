@@ -64,6 +64,11 @@ public static class YobaConfApp
 			builder.Services.AddSingleton<SqliteUserStore>();
 			builder.Services.AddSingleton<Core.Auth.IUserStore>(sp => sp.GetRequiredService<SqliteUserStore>());
 			builder.Services.AddSingleton<Core.Auth.IUserAdmin>(sp => sp.GetRequiredService<SqliteUserStore>());
+
+			// Audit log — read surface only; writes flow through the admin stores (spec §7
+			// invariant: "only storage impl populates").
+			builder.Services.AddSingleton<SqliteAuditLogStore>();
+			builder.Services.AddSingleton<Core.Audit.IAuditLogStore>(sp => sp.GetRequiredService<SqliteAuditLogStore>());
 		}
 
 		// AES-256-GCM secrets encryption — master key from env var YOBACONF_MASTER_KEY

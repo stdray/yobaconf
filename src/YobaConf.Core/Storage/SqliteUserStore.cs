@@ -2,6 +2,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using Microsoft.Extensions.Options;
+using YobaConf.Core.Audit;
 using YobaConf.Core.Auth;
 using YobaConf.Core.Observability;
 
@@ -80,45 +81,89 @@ public sealed class SqliteUserStore : IUserStore, IUserAdmin
 		return AdminPasswordHasher.Verify(plaintextPassword, user.PasswordHash);
 	}
 
-	public void Create(string username, string plaintextPassword, DateTimeOffset at)
+	public void Create(string username, string plaintextPassword, DateTimeOffset at, string actor = "system")
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(username);
 		ArgumentException.ThrowIfNullOrWhiteSpace(plaintextPassword);
+		ArgumentNullException.ThrowIfNull(actor);
 
 		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.create-user");
 		using var db = Open();
+		using var tx = db.BeginTransaction();
 		if (db.GetTable<UserRow>().Any(r => r.Username == username))
 			throw new InvalidOperationException($"User '{username}' already exists.");
 
+		var ts = at.ToUnixTimeMilliseconds();
 		db.Insert(new UserRow
 		{
 			Username = username,
 			PasswordHash = AdminPasswordHasher.Hash(plaintextPassword),
-			CreatedAt = at.ToUnixTimeMilliseconds(),
+			CreatedAt = ts,
 		});
+		SqliteAuditLogStore.Append(db, new AuditLogRow
+		{
+			At = ts,
+			Actor = actor,
+			Action = AuditAction.Created.ToString(),
+			EntityType = AuditEntityType.User.ToString(),
+			KeyPath = username,
+			OldValue = null,
+			NewValue = "password-set",
+		});
+		tx.Commit();
 	}
 
-	public bool UpdatePassword(string username, string plaintextPassword)
+	public bool UpdatePassword(string username, string plaintextPassword, string actor = "system")
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(username);
 		ArgumentException.ThrowIfNullOrWhiteSpace(plaintextPassword);
+		ArgumentNullException.ThrowIfNull(actor);
 
 		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.update-user-password");
 		using var db = Open();
+		using var tx = db.BeginTransaction();
 		var affected = db.GetTable<UserRow>()
 			.Where(r => r.Username == username)
 			.Set(r => r.PasswordHash, AdminPasswordHasher.Hash(plaintextPassword))
 			.Update();
-		return affected > 0;
+		if (affected == 0) return false;
+
+		SqliteAuditLogStore.Append(db, new AuditLogRow
+		{
+			At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+			Actor = actor,
+			Action = AuditAction.Updated.ToString(),
+			EntityType = AuditEntityType.User.ToString(),
+			KeyPath = username,
+			OldValue = "password-hash",
+			NewValue = "password-changed",
+		});
+		tx.Commit();
+		return true;
 	}
 
-	public bool Delete(string username)
+	public bool Delete(string username, string actor = "system")
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(username);
+		ArgumentNullException.ThrowIfNull(actor);
 		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.delete-user");
 		using var db = Open();
+		using var tx = db.BeginTransaction();
 		var affected = db.GetTable<UserRow>().Where(r => r.Username == username).Delete();
-		return affected > 0;
+		if (affected == 0) return false;
+
+		SqliteAuditLogStore.Append(db, new AuditLogRow
+		{
+			At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+			Actor = actor,
+			Action = AuditAction.Deleted.ToString(),
+			EntityType = AuditEntityType.User.ToString(),
+			KeyPath = username,
+			OldValue = "password-set",
+			NewValue = null,
+		});
+		tx.Commit();
+		return true;
 	}
 
 	static User ToDomain(UserRow r) =>

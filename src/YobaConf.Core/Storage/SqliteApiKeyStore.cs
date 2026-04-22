@@ -4,6 +4,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using Microsoft.Extensions.Options;
+using YobaConf.Core.Audit;
 using YobaConf.Core.Auth;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Observability;
@@ -68,10 +69,11 @@ public sealed class SqliteApiKeyStore : IApiKeyStore, IApiKeyAdmin
 		return new ApiKeyValidation.Valid(ToDomain(row));
 	}
 
-	public ApiKeyCreated Create(TagSet requiredTags, IReadOnlyList<string>? allowedKeyPrefixes, string description, DateTimeOffset at)
+	public ApiKeyCreated Create(TagSet requiredTags, IReadOnlyList<string>? allowedKeyPrefixes, string description, DateTimeOffset at, string actor = "system")
 	{
 		ArgumentNullException.ThrowIfNull(requiredTags);
 		ArgumentNullException.ThrowIfNull(description);
+		ArgumentNullException.ThrowIfNull(actor);
 
 		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.create-api-key");
 
@@ -81,8 +83,10 @@ public sealed class SqliteApiKeyStore : IApiKeyStore, IApiKeyAdmin
 		var prefixesJson = allowedKeyPrefixes is null or { Count: 0 }
 			? null
 			: JsonSerializer.Serialize(allowedKeyPrefixes);
+		var ts = at.ToUnixTimeMilliseconds();
 
 		using var db = Open();
+		using var tx = db.BeginTransaction();
 		var id = Convert.ToInt64(db.InsertWithIdentity(new ApiKeyRow
 		{
 			TokenHash = hash,
@@ -90,9 +94,24 @@ public sealed class SqliteApiKeyStore : IApiKeyStore, IApiKeyAdmin
 			RequiredTagsJson = requiredTags.CanonicalJson,
 			AllowedKeyPrefixes = prefixesJson,
 			Description = description,
-			UpdatedAt = at.ToUnixTimeMilliseconds(),
+			UpdatedAt = ts,
 			IsDeleted = 0,
 		}));
+
+		SqliteAuditLogStore.Append(db, new AuditLogRow
+		{
+			At = ts,
+			Actor = actor,
+			Action = AuditAction.Created.ToString(),
+			EntityType = AuditEntityType.ApiKey.ToString(),
+			TagSetJson = requiredTags.CanonicalJson,
+			KeyPath = prefix,
+			OldValue = null,
+			NewValue = $"{description}|prefixes={prefixesJson ?? "null"}",
+			OldHash = null,
+			NewHash = hash,
+		});
+		tx.Commit();
 
 		return new ApiKeyCreated(
 			new ApiKeyInfo(id, prefix, requiredTags, allowedKeyPrefixes, description, at),
@@ -116,16 +135,37 @@ public sealed class SqliteApiKeyStore : IApiKeyStore, IApiKeyAdmin
 			DateTimeOffset.FromUnixTimeMilliseconds(r.UpdatedAt)))];
 	}
 
-	public bool SoftDelete(long id, DateTimeOffset at)
+	public bool SoftDelete(long id, DateTimeOffset at, string actor = "system")
 	{
+		ArgumentNullException.ThrowIfNull(actor);
 		using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.soft-delete-api-key");
 		using var db = Open();
-		var affected = db.GetTable<ApiKeyRow>()
+		using var tx = db.BeginTransaction();
+		var existing = db.GetTable<ApiKeyRow>().FirstOrDefault(r => r.Id == id && r.IsDeleted == 0);
+		if (existing is null) return false;
+
+		var ts = at.ToUnixTimeMilliseconds();
+		db.GetTable<ApiKeyRow>()
 			.Where(r => r.Id == id && r.IsDeleted == 0)
 			.Set(r => r.IsDeleted, 1)
-			.Set(r => r.UpdatedAt, at.ToUnixTimeMilliseconds())
+			.Set(r => r.UpdatedAt, ts)
 			.Update();
-		return affected > 0;
+
+		SqliteAuditLogStore.Append(db, new AuditLogRow
+		{
+			At = ts,
+			Actor = actor,
+			Action = AuditAction.Deleted.ToString(),
+			EntityType = AuditEntityType.ApiKey.ToString(),
+			TagSetJson = existing.RequiredTagsJson,
+			KeyPath = existing.TokenPrefix,
+			OldValue = $"{existing.Description}|prefixes={existing.AllowedKeyPrefixes ?? "null"}",
+			NewValue = null,
+			OldHash = existing.TokenHash,
+			NewHash = null,
+		});
+		tx.Commit();
+		return true;
 	}
 
 	static ApiKey ToDomain(ApiKeyRow r) => new()

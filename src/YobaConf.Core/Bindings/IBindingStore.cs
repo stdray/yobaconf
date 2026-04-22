@@ -24,12 +24,15 @@ public interface IBindingStoreAdmin
 	// updated in place (Id preserved); otherwise a new row is inserted. Soft-deleted
 	// rows at the same coordinate are left alone — they stay in AuditLog-reachable
 	// form — and a new Id is assigned. Returns the post-write Binding plus the prior
-	// hash (null for insert) so the audit layer (D.1) can emit a diff entry.
-	UpsertOutcome Upsert(Binding binding);
+	// hash (null for insert) so the audit layer can emit a diff entry.
+	//
+	// `actor` is the identity threaded through to AuditLog — pages pass the cookie-auth
+	// username; background wiring passes "system"; rollback passes `restore:<audit-id>`.
+	UpsertOutcome Upsert(Binding binding, string actor = "system");
 
 	// Soft-delete by Id. Flips IsDeleted=1, bumps UpdatedAt. Returns true if the row
 	// existed and was active; false if missing or already deleted.
-	bool SoftDelete(long id, DateTimeOffset at);
+	bool SoftDelete(long id, DateTimeOffset at, string actor = "system");
 }
 
 public readonly record struct UpsertOutcome(Binding Binding, string? OldHash);
