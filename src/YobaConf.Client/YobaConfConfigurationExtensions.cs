@@ -8,12 +8,14 @@ namespace YobaConf.Client;
 //     {
 //         o.BaseUrl = "https://yobaconf.3po.su";
 //         o.ApiKey = Environment.GetEnvironmentVariable("YOBACONF_API_KEY")!;
-//         o.Path = "projects.animemov-bot.prod";
+//         o.WithTag("env", "prod")
+//          .WithTag("project", "yobapub")
+//          .WithTag("host", Environment.MachineName);
 //         o.RefreshInterval = TimeSpan.FromMinutes(5);
 //     });
 //
-// After this, `IConfiguration` reads (typed `GetValue<T>` / options-binding) come from the
-// resolved YobaConf JSON. Changes poll-in every RefreshInterval via ETag conditional GET.
+// After this, `IConfiguration` reads (typed `GetValue<T>` / options-binding) come from
+// the resolved YobaConf JSON. Changes poll-in every RefreshInterval via ETag conditional GET.
 public static class YobaConfConfigurationExtensions
 {
 	public static IConfigurationBuilder AddYobaConf(

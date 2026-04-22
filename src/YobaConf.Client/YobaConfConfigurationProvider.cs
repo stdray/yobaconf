@@ -5,8 +5,8 @@ using Microsoft.Extensions.Configuration;
 
 namespace YobaConf.Client;
 
-// `IConfigurationProvider` that fetches a YobaConf node over HTTP on initial load, then
-// polls every RefreshInterval with ETag-aware conditional GETs.
+// `IConfigurationProvider` that fetches resolved YobaConf config over HTTP on initial
+// load, then polls every RefreshInterval with ETag-aware conditional GETs.
 //
 // Lifecycle:
 //   1. `Load()` — synchronous initial fetch. Blocks on the HTTP call (standard pattern —
@@ -14,14 +14,14 @@ namespace YobaConf.Client;
 //      base class `Data` dictionary via the flattener. On failure, throws (or returns
 //      empty if Options.Optional).
 //   2. Background `Timer` calls `PollAsync` every RefreshInterval. Sends
-//      `If-None-Match: <last-etag>`. 200 -> replace Data + OnReload(). 304 -> no-op.
-//      Auth failures / 4xx / network errors -> log via Debug + keep last-known-good state.
-//   3. `Dispose()` -> stop timer, dispose HttpClient.
+//      `If-None-Match: <last-etag>`. 200 → replace Data + OnReload(). 304 → no-op.
+//      Auth / 4xx / network errors → keep last-known-good state.
+//   3. `Dispose()` → stop timer, dispose HttpClient.
 //
-// `Data` replacement races with `IConfiguration.Get` readers. The base class `Data` is
-// `IDictionary<string, string?>` (not concurrent). We replace the dictionary reference
-// atomically via `Interlocked.Exchange` on a private backing field, then assign
-// `Data = newRef` — readers observe either the old or new dict, never a torn state.
+// Data replacement races with `IConfiguration.Get` readers. The base class `Data` is
+// `IDictionary<string, string?>` (not concurrent). We build the replacement dictionary
+// and then assign in one go — readers observe either the old or new dict, never a
+// partially-populated one.
 public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisposable
 {
 	readonly YobaConfConfigurationOptions _options;
@@ -37,8 +37,8 @@ public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisp
 		ArgumentNullException.ThrowIfNull(options);
 		if (string.IsNullOrWhiteSpace(options.BaseUrl))
 			throw new ArgumentException("BaseUrl is required.", nameof(options));
-		if (string.IsNullOrWhiteSpace(options.Path))
-			throw new ArgumentException("Path is required.", nameof(options));
+		if (string.IsNullOrWhiteSpace(options.ApiKey))
+			throw new ArgumentException("ApiKey is required.", nameof(options));
 
 		_options = options;
 		_http = options.Handler is null
@@ -46,8 +46,7 @@ public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisp
 			: new HttpClient(options.Handler, disposeHandler: false);
 
 		var baseUri = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
-		// v1/conf/{path} — path is already dot-separated, matches the server's URL shape.
-		_endpoint = new Uri(new Uri(baseUri), $"v1/conf/{options.Path}");
+		_endpoint = new Uri(new Uri(baseUri), BuildQuery(options.Tags));
 	}
 
 	public override void Load()
@@ -60,12 +59,9 @@ public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisp
 		}
 		catch (Exception) when (_options.Optional)
 		{
-			// Optional: start with empty data; PollAsync will retry on next tick.
 			Data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 		}
 
-		// Timer starts regardless of initial outcome — poll will recover when the backend
-		// becomes reachable. Null RefreshInterval (TimeSpan.Zero) disables polling.
 		if (_options.RefreshInterval > TimeSpan.Zero)
 		{
 			_timer = new Timer(
@@ -78,10 +74,7 @@ public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisp
 
 	async Task PollSafeAsync()
 	{
-		// Serialise polls — a slow response shouldn't overlap with the next timer tick.
-		// Lock acquired via TryEnter so a delayed poll just skips rather than queueing.
-		if (!_pollGate.TryEnter())
-			return;
+		if (!_pollGate.TryEnter()) return;
 		try
 		{
 			await FetchAsync(CancellationToken.None).ConfigureAwait(false);
@@ -89,8 +82,7 @@ public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisp
 		catch (Exception)
 		{
 			// Last-known-good preserved. Polling providers must never lose working config
-			// due to transient issues. Diagnostics: if this matters to callers, swap Debug
-			// for a real ILogger once the SDK grows consumers who ask for it.
+			// due to transient issues.
 			System.Diagnostics.Debug.WriteLine("YobaConf poll failed; keeping last-known-good data.");
 		}
 		finally
@@ -108,8 +100,7 @@ public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisp
 
 		using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
-		if (response.StatusCode == HttpStatusCode.NotModified)
-			return; // Data unchanged; no reload.
+		if (response.StatusCode == HttpStatusCode.NotModified) return;
 
 		response.EnsureSuccessStatusCode();
 
@@ -119,17 +110,25 @@ public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisp
 		using var doc = JsonDocument.Parse(body);
 		var next = JsonFlattener.Flatten(doc);
 
-		// Atomic swap — readers hitting TryGet between the two assignments see either the
-		// old or new dict, never a partially-populated one.
 		Data = next;
 		_lastEtag = etag;
 		OnReload();
 	}
 
+	static string BuildQuery(Dictionary<string, string> tags)
+	{
+		var parts = new List<string>(tags.Count);
+		// Stable order — helps server-side log grepping and caching. The resolve endpoint
+		// treats duplicate tag-keys with last-wins semantics, so ordering is just for our
+		// own readability.
+		foreach (var kv in tags.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+			parts.Add($"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}");
+		return parts.Count == 0 ? "v1/conf" : $"v1/conf?{string.Join('&', parts)}";
+	}
+
 	public void Dispose()
 	{
-		if (_disposed)
-			return;
+		if (_disposed) return;
 		_disposed = true;
 		_timer?.Dispose();
 		_http.Dispose();

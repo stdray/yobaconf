@@ -1,9 +1,10 @@
 namespace YobaConf.Client;
 
-// Caller-provided knobs for AddYobaConf. `Path` uses dot-notation (matches URL shape at
-// /v1/conf/{path}): `projects.yoba.prod`, not slash-form.
+// Caller-provided knobs for AddYobaConf. Tag-vector — not a single hierarchical path —
+// selects which bindings resolve into the configuration tree. Matches spec v2 API shape
+// at `/v1/conf?tag1=v1&tag2=v2&…`.
 //
-// `Handler` is an escape hatch for tests — inject the WebApplicationFactory's
+// `Handler` is an escape hatch for tests — inject WebApplicationFactory's
 // Server.CreateHandler() so the SDK talks to an in-process yobaconf without touching the
 // network. Production uses the default SocketsHttpHandler.
 public sealed class YobaConfConfigurationOptions
@@ -14,14 +15,16 @@ public sealed class YobaConfConfigurationOptions
 	// Plaintext token. Sent as `X-YobaConf-ApiKey` header on every request.
 	public string ApiKey { get; set; } = string.Empty;
 
-	// Dot-separated node path — same shape as the URL segment. `projects.yoba.prod`.
-	public string Path { get; set; } = string.Empty;
+	// Tag-vector components. Resolve finds every binding whose tag-set is a subset of
+	// this, mergees by specificity. Populate via `WithTag` or by direct add.
+	public Dictionary<string, string> Tags { get; } = new(StringComparer.Ordinal);
 
 	// How often to re-poll for changes. Each poll uses `If-None-Match: <etag>`, so 304s
 	// are cheap. Minimum sensible value is a few seconds; the SDK doesn't enforce a floor.
+	// Set to TimeSpan.Zero to disable polling (one-shot load at startup only).
 	public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromMinutes(5);
 
-	// When true, initial load failures (404, auth errors, network errors) don't throw —
+	// When true, initial load failures (409, auth errors, network errors) don't throw —
 	// the provider starts with empty data and retries on the next poll tick. Matches the
 	// ConfigurationBuilder `optional: true` convention. Default false: missing config at
 	// startup is usually a broken-deploy signal, fail-fast surfaces it.
@@ -31,4 +34,19 @@ public sealed class YobaConfConfigurationOptions
 	// TestServer handler). Production leaves this null and the provider builds its own
 	// HttpClient with the default handler.
 	public HttpMessageHandler? Handler { get; set; }
+
+	public YobaConfConfigurationOptions WithTag(string key, string value)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(key);
+		ArgumentException.ThrowIfNullOrEmpty(value);
+		Tags[key] = value;
+		return this;
+	}
+
+	public YobaConfConfigurationOptions WithTags(IEnumerable<KeyValuePair<string, string>> tags)
+	{
+		ArgumentNullException.ThrowIfNull(tags);
+		foreach (var (k, v) in tags) WithTag(k, v);
+		return this;
+	}
 }
