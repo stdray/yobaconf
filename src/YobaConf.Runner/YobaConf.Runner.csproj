@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<RootNamespace>YobaConf.Runner</RootNamespace>
+		<AssemblyName>yobaconf-run</AssemblyName>
+		<!-- Single-file publish profile for the runner Docker image (C.3). Dev builds skip
+		     the trimming so DI + reflection paths aren't accidentally stripped. -->
+		<PublishSingleFile>true</PublishSingleFile>
+		<SelfContained>true</SelfContained>
+		<InvariantGlobalization>true</InvariantGlobalization>
+	</PropertyGroup>
+
+</Project>

@@ -25,6 +25,7 @@
 		<ProjectReference Include="..\..\src\YobaConf.Core\YobaConf.Core.csproj" />
 		<ProjectReference Include="..\..\src\YobaConf.Web\YobaConf.Web.csproj" />
 		<ProjectReference Include="..\..\src\YobaConf.Client\YobaConf.Client.csproj" />
+		<ProjectReference Include="..\..\src\YobaConf.Runner\YobaConf.Runner.csproj" />
 	</ItemGroup>
 
 </Project>
