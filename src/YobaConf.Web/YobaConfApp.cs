@@ -51,6 +51,11 @@ public static class YobaConfApp
 			builder.Services.AddSingleton<SqliteBindingStore>();
 			builder.Services.AddSingleton<IBindingStore>(sp => sp.GetRequiredService<SqliteBindingStore>());
 			builder.Services.AddSingleton<IBindingStoreAdmin>(sp => sp.GetRequiredService<SqliteBindingStore>());
+
+			// Api-keys store shares the same DB file (one SQLite database, multiple tables).
+			builder.Services.AddSingleton<SqliteApiKeyStore>();
+			builder.Services.AddSingleton<Core.Auth.IApiKeyStore>(sp => sp.GetRequiredService<SqliteApiKeyStore>());
+			builder.Services.AddSingleton<Core.Auth.IApiKeyAdmin>(sp => sp.GetRequiredService<SqliteApiKeyStore>());
 		}
 
 		// AES-256-GCM secrets encryption — master key from env var YOBACONF_MASTER_KEY
