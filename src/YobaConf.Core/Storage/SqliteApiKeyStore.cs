@@ -29,11 +29,11 @@ public sealed class SqliteApiKeyStore : IApiKeyStore, IApiKeyAdmin
 		Directory.CreateDirectory(opts.DataDirectory);
 		dbPath = Path.Combine(opts.DataDirectory, opts.FileName);
 
-		// SqliteBindingStore runs AllStatements on its own construction; if it ran first
-		// the tables exist. Replaying again is idempotent so the ordering doesn't matter.
+		// SqliteBindingStore runs EnsureSchema on its own construction; if it ran first
+		// the tables exist + user_version is already bumped. Re-running EnsureSchema is
+		// idempotent so the ordering doesn't matter.
 		using var db = Open();
-		foreach (var stmt in SqliteSchema.AllStatements)
-			db.Execute(stmt);
+		SqliteSchema.EnsureSchema(db);
 	}
 
 	DataConnection Open()

@@ -30,8 +30,7 @@ public sealed class SqliteUserStore : IUserStore, IUserAdmin
 		dbPath = Path.Combine(opts.DataDirectory, opts.FileName);
 
 		using var db = Open();
-		foreach (var stmt in SqliteSchema.AllStatements)
-			db.Execute(stmt);
+		SqliteSchema.EnsureSchema(db);
 	}
 
 	DataConnection Open()

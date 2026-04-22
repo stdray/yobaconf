@@ -1,11 +1,51 @@
+using LinqToDB.Data;
+
 namespace YobaConf.Core.Storage;
 
-// DDL for the tagged-v2 SQLite schema. CREATE-IF-NOT-EXISTS everywhere — SqliteBindingStore
-// replays `AllStatements` on every startup. Four tables land together in A.1 even though
-// only Bindings is populated now; ApiKeys (A.3) / Users (B.1) / AuditLog (D.1) fill in
-// later. Creating upfront avoids a schema migration at each phase boundary.
+// DDL for the tagged-v2 SQLite schema. CREATE-IF-NOT-EXISTS everywhere — every store's
+// ctor calls `EnsureSchema(db)` which runs the v1-migration first (idempotent after the
+// first successful bump) and then replays `AllStatements`.
+//
+// Migration context: the v1 path-tree deploy persisted `Nodes` / `Variables` / `Secrets`
+// plus an `AuditLog` whose column layout (Path / ScopePath / EntryKey) is incompatible
+// with the v2 AuditLog (TagSetJson / KeyPath). Because Docker's /app/data volume survives
+// redeploys, a v2 container booting against a v1 volume blows up when
+// `CreateAuditLogTagSetAtIndex` tries to index a column that doesn't exist. The migration
+// below is gated on `PRAGMA user_version` so it fires exactly once per database lifetime:
+// v1 DBs arrive at 0, get their v1 tables dropped + v2 recreated, and the version stamps
+// to 2 so subsequent boots preserve audit history.
+//
+// Fresh (never-booted) DBs are also at version 0 and hit the same path — harmless:
+// DROP TABLE IF EXISTS on non-existent tables is a no-op, and CREATE runs cleanly. After
+// version=2, the drop branch never re-fires.
 static class SqliteSchema
 {
+	public const int CurrentSchemaVersion = 2;
+
+	public static void EnsureSchema(DataConnection db)
+	{
+		ArgumentNullException.ThrowIfNull(db);
+
+		var current = db.Query<long>("PRAGMA user_version;").First();
+		if (current < CurrentSchemaVersion)
+		{
+			// v1 path-tree leftovers — present in prod volumes from the pre-pivot deploy,
+			// absent in fresh v2 databases. IF EXISTS makes both cases a no-op-or-drop.
+			db.Execute("DROP TABLE IF EXISTS Nodes;");
+			db.Execute("DROP TABLE IF EXISTS Variables;");
+			db.Execute("DROP TABLE IF EXISTS Secrets;");
+			// v1 AuditLog can't ALTER into v2 (wrong columns) — drop wholesale. On a fresh
+			// DB this is a no-op; on a v1 DB this loses the path-tree audit history (which
+			// references path-tree entities we no longer have any way to render).
+			db.Execute("DROP TABLE IF EXISTS AuditLog;");
+			db.Execute($"PRAGMA user_version = {CurrentSchemaVersion};");
+		}
+
+		foreach (var stmt in AllStatements)
+			db.Execute(stmt);
+	}
+
+
 	// Bindings — flat (TagSet, KeyPath, Value). UNIQUE partial index on (TagSetJson,
 	// KeyPath) WHERE IsDeleted=0 lets soft-deleted history stack while keeping at most
 	// one active row per coordinate. `TagCount` is denormalized specificity — set on
