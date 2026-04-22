@@ -40,6 +40,32 @@ public sealed class WebAppFixture : IAsyncLifetime
 			s["Admin:PasswordHash"] = hash;
 		});
 
+		// Warm-up: force DI singletons (SqliteBindingStore / SqliteApiKeyStore / SqliteUserStore)
+		// to construct once in the main thread before concurrent requests race through DI
+		// resolution and schema-replay on the same .db file. Without this the seed-login has
+		// flaked in ~10% of runs because the Login POST and the cookie-auth validation race
+		// each other's first-touch of DI.
+		_ = Services.GetService<Core.Bindings.IBindingStore>();
+		_ = Services.GetService<Core.Auth.IApiKeyStore>();
+		_ = Services.GetService<Core.Auth.IUserStore>();
+
+		// Block until Kestrel actually answers — StartAsync returns as soon as the listener
+		// binds, but the first few requests can arrive before RazorPages + DataProtection
+		// finish warming. Polling /health is the cheapest signal that the pipeline is alive.
+		using (var warmupClient = new HttpClient { BaseAddress = new Uri(BaseUrl) })
+		{
+			for (var attempt = 0; attempt < 30; attempt++)
+			{
+				try
+				{
+					var res = await warmupClient.GetAsync(new Uri("/health", UriKind.Relative));
+					if (res.IsSuccessStatusCode) break;
+				}
+				catch (HttpRequestException) { /* keep polling */ }
+				await Task.Delay(100);
+			}
+		}
+
 		_playwright = await Playwright.CreateAsync();
 		_browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
 
@@ -53,6 +79,15 @@ public sealed class WebAppFixture : IAsyncLifetime
 			BaseURL = BaseUrl,
 			IgnoreHTTPSErrors = true,
 		});
+		// Same CDN stub as test contexts — the post-login landing page renders _Layout which
+		// pulls htmx from unpkg, and without the stub headless Chromium stalls on the CDN.
+		await seedCtx.RouteAsync("**/unpkg.com/**", route => route.FulfillAsync(new RouteFulfillOptions
+		{
+			Status = 200,
+			ContentType = "application/javascript",
+			Body = "/* stubbed CDN fetch */",
+		}));
+
 		var seedPage = await seedCtx.NewPageAsync();
 		await seedPage.GotoAsync("/Login");
 		await seedPage.GetByTestId("login-username").FillAsync(AdminUsername);
