@@ -4,56 +4,131 @@
 	ViewData["Title"] = "New from paste";
 }
 
-<h1 class="text-2xl font-semibold mb-4">New node from paste</h1>
-
-<p class="opacity-70 mb-4 text-sm">
-	Paste an existing config (JSON, YAML, or <code>.env</code>) and get an equivalent HOCON node.
-	Convert previews the result; Save creates or overwrites the node at the target path.
-</p>
+<h1 class="text-2xl font-semibold mb-4">Import from JSON / YAML / .env</h1>
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
 	<div class="alert alert-error mb-4" data-testid="import-error">@Model.ErrorMessage</div>
 }
+
 @if (!string.IsNullOrEmpty(Model.SuccessMessage))
 {
 	<div class="alert alert-success mb-4" data-testid="import-success">@Model.SuccessMessage</div>
 }
 
-<form method="post" class="grid grid-cols-2 gap-4">
-	<label class="form-control">
-		<span class="label-text">Target path (dot-separated)</span>
-		<input type="text" name="TargetPath" value="@Model.TargetPath"
-			placeholder="projects.yoba.prod"
-			class="input input-bordered font-mono text-sm" data-testid="import-path" />
-	</label>
+@if (Model.ClassifyStep)
+{
+	<form method="post" asp-page-handler="SaveClassified" data-testid="classify-form">
+		<input type="hidden" asp-for="TargetPath" />
+		<input type="hidden" asp-for="PreviewHocon" />
 
-	<label class="form-control">
-		<span class="label-text">Source format</span>
-		<select name="Format" class="select select-bordered" data-testid="import-format">
-			<option value="json" selected="@(Model.Format == "json")">JSON</option>
-			<option value="yaml" selected="@(Model.Format == "yaml")">YAML</option>
-			<option value="env" selected="@(Model.Format == "env")">.env</option>
-		</select>
-	</label>
+		<h2 class="text-lg mb-2">Classify imported keys</h2>
+		<p class="text-sm opacity-70 mb-3">
+			Target: <code class="font-mono text-xs">@Model.TargetPath</code> ·
+			<strong>Keep</strong> leaves in HOCON ·
+			<strong>Variable</strong> extracts to Variables table (plaintext) ·
+			<strong>Secret</strong> extracts to Secrets (encrypted, masked).
+		</p>
 
-	<label class="form-control col-span-2">
-		<span class="label-text">Source text</span>
-		<textarea name="Source" class="textarea textarea-bordered font-mono text-xs h-48"
-			data-testid="import-source"
-			placeholder="paste config here">@Model.Source</textarea>
-	</label>
+		<div class="border border-base-300 rounded divide-y divide-base-300 mb-4" data-testid="classify-table">
+			@for (var i = 0; i < Model.Leaves.Count; i++)
+			{
+				var leaf = Model.Leaves[i];
+				<div class="flex items-center gap-2 p-2" data-testid="classify-row" data-classify-key="@leaf.Key">
+					<input type="hidden" name="Leaves[@i].Key" value="@leaf.Key" />
+					<input type="hidden" name="Leaves[@i].Value" value="@leaf.Value" />
+					<span class="font-mono text-xs text-primary min-w-0 flex-1 break-all" data-testid="classify-key">@leaf.Key</span>
+					<span class="font-mono text-xs opacity-60 min-w-0 flex-1 break-all" data-classify-value data-value="@leaf.Value" data-testid="classify-value">•••••••</span>
+					<button type="button" class="btn btn-xs btn-ghost" data-classify-reveal data-testid="classify-reveal">👁</button>
+					<div class="flex gap-3 text-xs">
+						<label class="flex items-center gap-1">
+							<input type="radio" name="Leaves[@i].Classification" value="keep" checked="@(leaf.Classification == "keep")" class="radio radio-xs" data-testid="classify-keep" /> Keep
+						</label>
+						<label class="flex items-center gap-1">
+							<input type="radio" name="Leaves[@i].Classification" value="variable" checked="@(leaf.Classification == "variable")" class="radio radio-xs" data-testid="classify-variable" /> Variable
+						</label>
+						<label class="flex items-center gap-1">
+							<input type="radio" name="Leaves[@i].Classification" value="secret" checked="@(leaf.Classification == "secret")" class="radio radio-xs" data-testid="classify-secret" /> Secret
+						</label>
+					</div>
+				</div>
+			}
+		</div>
 
-	<label class="form-control col-span-2">
-		<span class="label-text">Converted HOCON preview</span>
-		<pre class="bg-base-200 p-3 rounded text-xs overflow-auto h-48 whitespace-pre-wrap"
-			data-testid="import-preview"><code class="language-hocon">@Model.Preview</code></pre>
-	</label>
+		<div class="flex items-center gap-2">
+			<a asp-page="/Import" class="btn btn-sm btn-ghost" data-testid="classify-cancel">← Back</a>
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="classify-save">Save</button>
+		</div>
+	</form>
 
-	<div class="col-span-2 flex gap-2">
-		<button type="submit" name="Action" value="preview" class="btn btn-outline"
-			data-testid="import-convert">Convert (preview only)</button>
-		<button type="submit" name="Action" value="save" class="btn btn-primary"
-			data-testid="import-save">Save as node</button>
-	</div>
-</form>
+	<script>
+		// Per-row reveal: toggle masked placeholder ↔ plaintext. Plaintext lives in a
+		// data-value attribute (MVP trade-off — server-cached reveal endpoint is a
+		// documented follow-up in plan.md). Auto-rehide after 10s.
+		document.querySelectorAll('[data-classify-reveal]').forEach(btn => {
+			btn.addEventListener('click', () => {
+				const row = btn.closest('[data-testid="classify-row"]');
+				const span = row.querySelector('[data-classify-value]');
+				const plain = span.dataset.value;
+				if (span.textContent === plain) {
+					span.textContent = '•••••••';
+				} else {
+					span.textContent = plain;
+					setTimeout(() => { span.textContent = '•••••••'; }, 10000);
+				}
+			});
+		});
+	</script>
+}
+else
+{
+	<p class="opacity-70 mb-4 text-sm">
+		Paste JSON / YAML / <code>.env</code> and get equivalent HOCON.
+		Convert previews the result; Classify (flat HOCON only) splits per-leaf into
+		Keep / Variable / Secret; Save stores as a single node verbatim.
+	</p>
+
+	<form method="post" class="grid grid-cols-2 gap-4" data-testid="import-form">
+		<label class="form-control">
+			<span class="label-text">Target path (dot-separated)</span>
+			<input type="text" name="TargetPath" value="@Model.TargetPath"
+				placeholder="projects.yoba.prod"
+				class="input input-bordered font-mono text-sm" data-testid="import-path" />
+		</label>
+
+		<label class="form-control">
+			<span class="label-text">Source format</span>
+			<select name="Format" class="select select-bordered" data-testid="import-format">
+				<option value="json" selected="@(Model.Format == "json")">JSON</option>
+				<option value="yaml" selected="@(Model.Format == "yaml")">YAML</option>
+				<option value="env" selected="@(Model.Format == "env")">.env</option>
+			</select>
+		</label>
+
+		<label class="form-control col-span-2">
+			<span class="label-text">Source text</span>
+			<textarea name="Source" class="textarea textarea-bordered font-mono text-xs h-48"
+				data-testid="import-source"
+				placeholder="paste config here">@Model.Source</textarea>
+		</label>
+
+		<label class="form-control col-span-2">
+			<span class="label-text">Converted HOCON preview</span>
+			<pre class="bg-base-200 p-3 rounded text-xs overflow-auto h-48 whitespace-pre-wrap"
+				data-testid="import-preview"><code class="language-hocon">@Model.Preview</code></pre>
+			@if (!string.IsNullOrEmpty(Model.Preview) && !Model.IsFlat)
+			{
+				<span class="text-xs opacity-60 mt-1">HOCON contains nested structures — classification is disabled; use Save to store as a single node.</span>
+			}
+		</label>
+
+		<div class="col-span-2 flex gap-2">
+			<button type="submit" name="Action" value="convert" class="btn btn-outline"
+				data-testid="import-convert">Convert (preview only)</button>
+			<button type="submit" name="Action" value="classify" class="btn btn-secondary"
+				data-testid="import-classify">Classify →</button>
+			<button type="submit" name="Action" value="save" class="btn btn-primary"
+				data-testid="import-save">Save as node</button>
+		</div>
+	</form>
+}
