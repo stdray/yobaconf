@@ -4,27 +4,84 @@
 	ViewData["Title"] = "Configs";
 }
 
-<h1 class="text-2xl font-semibold mb-4">Configs</h1>
-
-@if (Model.Paths.Count == 0)
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
-	<p class="opacity-70">
-		No nodes yet.
-		<a asp-page="/Import" class="link link-primary" data-testid="import-empty-cta">Import from JSON / YAML / .env</a>
-		to get started.
-	</p>
+	<div class="alert alert-error mb-4" data-testid="index-error">@Model.ErrorMessage</div>
+}
+
+<div class="flex items-center gap-2 mb-4">
+	<div class="flex-1">
+		<input id="tree-search" type="search" placeholder="Search paths…"
+			class="input input-bordered input-sm w-full font-mono text-sm"
+			data-testid="tree-search"
+			aria-label="Search paths" />
+	</div>
+	<form method="post" asp-page-handler="NewEmpty" class="flex items-center gap-2" data-testid="new-empty-form">
+		<input type="text" name="newPath" placeholder="new.path"
+			class="input input-bordered input-sm font-mono text-sm w-40"
+			data-testid="new-empty-path"
+			aria-label="New empty node path" />
+		<button type="submit" class="btn btn-sm btn-ghost" data-testid="new-empty-submit">+ New empty</button>
+	</form>
+	<a asp-page="/Import" class="btn btn-sm btn-primary" data-testid="new-from-paste">+ New from paste</a>
+</div>
+
+@if (Model.ActualNodeCount == 0)
+{
+	<div class="flex justify-center mt-16" data-testid="index-empty">
+		<div class="card bg-base-200 border border-base-300 max-w-md w-full">
+			<div class="card-body items-center text-center">
+				<h2 class="card-title">No configs yet</h2>
+				<p class="text-sm opacity-70">Create a node from scratch, or paste existing JSON / YAML / .env.</p>
+				<div class="card-actions mt-4">
+					<a asp-page="/Import" class="btn btn-primary btn-sm" data-testid="import-empty-cta">+ New from paste</a>
+				</div>
+				<p class="mt-2 text-xs opacity-50">Or fill the path field above and hit <kbd class="kbd kbd-xs">Enter</kbd>.</p>
+			</div>
+		</div>
+	</div>
 }
 else
 {
-	<ul class="menu bg-base-200 rounded-box border border-base-300 w-full" data-testid="node-list">
-		@foreach (var path in Model.Paths)
-		{
-			<li>
-				<a asp-page="/Node" asp-route-path="@path.ToUrlPath()"
-					data-testid="node-link"
-					data-path="@path.ToDbPath()"
-					class="font-mono text-sm">@path.ToDbPath()</a>
-			</li>
-		}
+	<div class="flex items-baseline justify-between px-2 mb-2 text-xs opacity-70 font-mono">
+		<span>@Model.ActualNodeCount node@(Model.ActualNodeCount == 1 ? "" : "s")@(Model.VirtualDirCount > 0 ? $", {Model.VirtualDirCount} virtual dir{(Model.VirtualDirCount == 1 ? "" : "s")}" : "")</span>
+		<span>dot legend: <span class="text-primary">●</span> actual &nbsp;<span class="opacity-50">○</span> virtual dir</span>
+	</div>
+
+	<ul class="menu bg-base-200 rounded-box border border-base-300 w-full p-0" data-testid="node-list">
+		@await Html.PartialAsync("_TreeNode", new YobaConf.Web.Pages.TreeNodeContext(Model.Tree, 0))
 	</ul>
 }
+
+<script>
+	// Client-side filter: hides rows whose data-path doesn't substring-match the query.
+	// Virtual-dir rows stay visible if any descendant matches (keeps hierarchy legible).
+	(() => {
+		const q = document.getElementById('tree-search');
+		if (!q) return;
+		q.addEventListener('input', () => {
+			const needle = q.value.trim().toLowerCase();
+			const rows = document.querySelectorAll('[data-path]');
+			rows.forEach(r => r.dataset.match = '0');
+			rows.forEach(r => {
+				if (needle === '' || r.dataset.path.toLowerCase().includes(needle)) {
+					r.dataset.match = '1';
+					// Walk up virtual-dir ancestors and mark them visible too.
+					let cur = r.parentElement;
+					while (cur) {
+						if (cur.hasAttribute('data-path')) cur.dataset.match = '1';
+						cur = cur.parentElement;
+					}
+				}
+			});
+			rows.forEach(r => r.style.display = (needle === '' || r.dataset.match === '1') ? '' : 'none');
+		});
+		// Slash shortcut to focus search.
+		document.addEventListener('keydown', e => {
+			if (e.key === '/' && document.activeElement !== q && !(document.activeElement instanceof HTMLInputElement)) {
+				e.preventDefault();
+				q.focus();
+			}
+		});
+	})();
+</script>
