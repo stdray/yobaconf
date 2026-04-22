@@ -64,6 +64,47 @@ static class SqliteSchema
 		    ON Secrets(ScopePath, Key) WHERE IsDeleted = 0;
 		""";
 
+	// AuditLog — append-only history of every IConfigStoreAdmin write (Upsert + SoftDelete).
+	// Rows are never mutated; rollback creates a new Upsert that generates a new audit entry
+	// referring to the restored-from point via `Actor="restore:<id>"`.
+	//
+	// Value payloads (TEXT to keep one schema for Node/Variable/Secret/ApiKey):
+	//   Node:      OldValue/NewValue = RawContent; Hash fields = sha256 hex.
+	//   Variable:  OldValue/NewValue = plaintext Value; Hash = sha256 hex.
+	//   Secret:    OldValue/NewValue = "{b64(ciphertext)}|{b64(iv)}|{b64(authTag)}|{keyVersion}".
+	//              Plaintext never appears; rollback re-Upserts the encrypted tuple verbatim.
+	//   ApiKey:    OldValue/NewValue = serialized (TokenPrefix|RootPath|Description). Plaintext
+	//              token never stored post-creation; Hash field carries sha256(token).
+	public const string CreateAuditLogTable = """
+		CREATE TABLE IF NOT EXISTS AuditLog (
+			Id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			At         INTEGER NOT NULL,
+			Actor      TEXT    NOT NULL,
+			Action     TEXT    NOT NULL,
+			EntityType TEXT    NOT NULL,
+			Path       TEXT    NOT NULL,
+			EntryKey   TEXT    NULL,
+			OldValue   TEXT    NULL,
+			NewValue   TEXT    NULL,
+			OldHash    TEXT    NULL,
+			NewHash    TEXT    NULL
+		);
+		""";
+
+	// Composite index for the two most common queries: "history for path (newest first)" and
+	// "history for path + its descendants (newest first)". LIKE 'path%' scans the Path prefix
+	// then At DESC for day-grouped timeline rendering.
+	public const string CreateAuditLogPathAtIndex = """
+		CREATE INDEX IF NOT EXISTS ix_auditlog_path_at
+		    ON AuditLog(Path, At DESC);
+		""";
+
+	// Global "all activity" view (no path filter) — powers the admin-wide /History default.
+	public const string CreateAuditLogAtIndex = """
+		CREATE INDEX IF NOT EXISTS ix_auditlog_at
+		    ON AuditLog(At DESC);
+		""";
+
 	public static readonly IReadOnlyList<string> AllStatements =
 	[
 		CreateNodesTable,
@@ -71,5 +112,8 @@ static class SqliteSchema
 		CreateVariablesScopeKeyUniqueIndex,
 		CreateSecretsTable,
 		CreateSecretsScopeKeyUniqueIndex,
+		CreateAuditLogTable,
+		CreateAuditLogPathAtIndex,
+		CreateAuditLogAtIndex,
 	];
 }

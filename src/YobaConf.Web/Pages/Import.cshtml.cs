@@ -85,7 +85,7 @@ public sealed class ImportModel : PageModel
 				return Page();
 			}
 
-			_admin.UpsertNode(path, hocon, _clock.GetUtcNow());
+			_admin.UpsertNode(path, hocon, _clock.GetUtcNow(), actor: User.Identity?.Name ?? "admin");
 			SuccessMessage = $"Saved as '{path.ToDbPath()}'.";
 			TargetPath = null;
 			Source = null;
