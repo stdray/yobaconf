@@ -2,6 +2,7 @@
 @model YobaConf.Web.Pages.NodeModel
 @{
 	ViewData["Title"] = Model.Path.ToDbPath();
+	var urlPath = Model.Path.ToUrlPath();
 }
 
 <div class="mb-4 text-sm">
@@ -10,7 +11,16 @@
 
 <h1 class="text-xl font-mono mb-4" data-testid="node-title">@Model.Path.ToDbPath()</h1>
 
-<div class="grid grid-cols-2 gap-4">
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="node-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3" data-testid="node-success">@Model.SuccessMessage</div>
+}
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
 	<section>
 		<h2 class="text-sm uppercase opacity-70 mb-2">Raw HOCON</h2>
 		@if (Model.NodeExists)
@@ -56,3 +66,114 @@
 	</section>
 </div>
 
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+	<section data-testid="variables-section">
+		<h2 class="text-sm uppercase opacity-70 mb-2">Variables (@Model.Variables.Count)</h2>
+
+		<form method="post" asp-page-handler="AddVariable" class="flex items-center gap-2 mb-3" data-testid="add-variable-form">
+			<input type="hidden" name="path" value="@urlPath" />
+			<input type="text" name="newKey" placeholder="key"
+				class="input input-bordered input-sm font-mono text-xs flex-1 min-w-0"
+				data-testid="add-variable-key" required />
+			<input type="text" name="newValue" placeholder="value"
+				class="input input-bordered input-sm font-mono text-xs flex-1 min-w-0"
+				data-testid="add-variable-value" required />
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="add-variable-submit">Add</button>
+		</form>
+
+		@if (Model.Variables.Count == 0)
+		{
+			<div class="text-xs opacity-60 italic" data-testid="variables-empty">no variables defined at this path</div>
+		}
+		else
+		{
+			<div class="border border-base-300 rounded divide-y divide-base-300" data-testid="variables-list">
+				@foreach (var v in Model.Variables)
+				{
+					<form method="post" class="flex items-center gap-2 p-2" data-testid="variable-row" data-variable-key="@v.Key">
+						<input type="hidden" name="path" value="@urlPath" />
+						<input type="hidden" name="key" value="@v.Key" />
+						<input type="hidden" name="expectedHash" value="@v.ContentHash" />
+						<span class="font-mono text-xs text-primary min-w-0 break-all" data-testid="variable-key">@v.Key</span>
+						<input type="text" name="value" value="@v.Value"
+							class="input input-bordered input-xs font-mono text-xs flex-1 min-w-0"
+							data-testid="variable-value" />
+						<button type="submit" formaction="?handler=UpdateVariable" class="btn btn-xs" data-testid="variable-save">Save</button>
+						<button type="submit" formaction="?handler=DeleteVariable" class="btn btn-xs btn-ghost text-error" data-testid="variable-delete">Delete</button>
+					</form>
+				}
+			</div>
+		}
+	</section>
+
+	<section data-testid="secrets-section">
+		<h2 class="text-sm uppercase opacity-70 mb-2">Secrets (@Model.Secrets.Count)</h2>
+
+		<form method="post" asp-page-handler="AddSecret" class="flex items-center gap-2 mb-3" data-testid="add-secret-form">
+			<input type="hidden" name="path" value="@urlPath" />
+			<input type="text" name="newKey" placeholder="key"
+				class="input input-bordered input-sm font-mono text-xs flex-1 min-w-0"
+				data-testid="add-secret-key" required />
+			<input type="password" name="newValue" placeholder="value"
+				class="input input-bordered input-sm font-mono text-xs flex-1 min-w-0"
+				data-testid="add-secret-value" required />
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="add-secret-submit">Add</button>
+		</form>
+
+		@if (Model.Secrets.Count == 0)
+		{
+			<div class="text-xs opacity-60 italic" data-testid="secrets-empty">no secrets defined at this path</div>
+		}
+		else
+		{
+			<div class="border border-base-300 rounded divide-y divide-base-300" data-testid="secrets-list">
+				@foreach (var s in Model.Secrets)
+				{
+					var isRevealed = Model.RevealKey == s.Key;
+					<form method="post" class="flex items-center gap-2 p-2" data-testid="secret-row" data-secret-key="@s.Key">
+						<input type="hidden" name="path" value="@urlPath" />
+						<input type="hidden" name="key" value="@s.Key" />
+						<input type="hidden" name="expectedHash" value="@s.ContentHash" />
+						<span class="font-mono text-xs text-primary min-w-0 break-all" data-testid="secret-key">@s.Key</span>
+						@if (isRevealed)
+						{
+							<input type="text" name="value" value="@Model.RevealValue"
+								class="input input-bordered input-xs font-mono text-xs flex-1 min-w-0 bg-warning/10"
+								data-testid="secret-value-revealed" />
+						}
+						else
+						{
+							<input type="password" name="value" value="••••••"
+								class="input input-bordered input-xs font-mono text-xs flex-1 min-w-0"
+								data-testid="secret-value-masked" />
+						}
+						<a asp-page="/Node" asp-route-path="@urlPath" asp-route-reveal="@s.Key"
+							class="btn btn-xs btn-ghost" data-testid="secret-reveal" title="Reveal plaintext (10s)">👁</a>
+						<button type="submit" formaction="?handler=UpdateSecret" class="btn btn-xs" data-testid="secret-save">Save</button>
+						<button type="submit" formaction="?handler=DeleteSecret" class="btn btn-xs btn-ghost text-error" data-testid="secret-delete">Delete</button>
+					</form>
+				}
+			</div>
+		}
+	</section>
+</div>
+
+<script>
+	// 10-second auto-hide for revealed secrets: if the URL has ?reveal=..., rewrite it out
+	// after the timeout so a reload doesn't resurrect the plaintext.
+	(() => {
+		const params = new URLSearchParams(window.location.search);
+		if (params.has('reveal')) {
+			setTimeout(() => {
+				params.delete('reveal');
+				const url = window.location.pathname + (params.toString() ? '?' + params : '');
+				window.history.replaceState({}, '', url);
+				// Also hide the revealed input visually without a full reload.
+				document.querySelectorAll('[data-testid="secret-value-revealed"]').forEach(el => {
+					el.type = 'password';
+					el.value = '••••••';
+				});
+			}, 10000);
+		}
+	})();
+</script>
