@@ -37,12 +37,25 @@ public static class ConfEndpoint
 				statusCode: StatusCodes.Status401Unauthorized);
 		var apiKey = ((ApiKeyValidation.Valid)validation).Key;
 
-		// 2. Build tag-vector from every query-param except `apiKey`. Last-wins on duplicates
-		//    (standard HTTP semantics, matches spec §4 note).
+		// 2. Parse `template` (optional) — drives response shape selection. Everything else
+		//    in the query string is a tag-vector component; last-wins on duplicates.
+		ResponseTemplate template;
+		try
+		{
+			template = ResponseTemplateParser.Parse(ctx.Request.Query["template"].LastOrDefault());
+		}
+		catch (ArgumentException ex)
+		{
+			return Results.Json(
+				new { error = "bad_request", reason = ex.Message },
+				statusCode: StatusCodes.Status400BadRequest);
+		}
+
 		var tagVector = new Dictionary<string, string>(StringComparer.Ordinal);
 		foreach (var pair in ctx.Request.Query)
 		{
 			if (string.Equals(pair.Key, "apiKey", StringComparison.Ordinal)) continue;
+			if (string.Equals(pair.Key, "template", StringComparison.Ordinal)) continue;
 			var value = pair.Value.LastOrDefault() ?? string.Empty;
 
 			if (!Slug.IsValid(pair.Key))
@@ -65,7 +78,7 @@ public static class ConfEndpoint
 
 		// 4. Resolve.
 		var pipeline = new ResolvePipeline(bindings, encryptor);
-		var outcome = pipeline.Resolve(tagVector, apiKey.AllowedKeyPrefixes);
+		var outcome = pipeline.Resolve(tagVector, apiKey.AllowedKeyPrefixes, template);
 
 		// 5. Shape response.
 		return outcome switch

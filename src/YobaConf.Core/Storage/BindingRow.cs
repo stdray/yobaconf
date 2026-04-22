@@ -21,4 +21,5 @@ sealed class BindingRow
 	[Column, NotNull] public string ContentHash { get; set; } = string.Empty;
 	[Column] public long UpdatedAt { get; set; }
 	[Column] public int IsDeleted { get; set; }
+	[Column] public string? AliasesJson { get; set; }
 }

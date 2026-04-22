@@ -24,9 +24,14 @@ static class SqliteSchema
 			Kind        TEXT    NOT NULL,
 			ContentHash TEXT    NOT NULL,
 			UpdatedAt   INTEGER NOT NULL,
-			IsDeleted   INTEGER NOT NULL DEFAULT 0
+			IsDeleted   INTEGER NOT NULL DEFAULT 0,
+			AliasesJson TEXT    NULL
 		);
 		""";
+
+	// `AliasesJson` column was added in C.1 — CREATE TABLE above now includes it so
+	// fresh databases pick it up idempotently. Existing v2-A1 databases (if any — no
+	// prod data exists) can be wiped or migrated manually.
 
 	public const string CreateBindingsTagSetKeyLiveIndex = """
 		CREATE UNIQUE INDEX IF NOT EXISTS ux_bindings_tagset_key_live

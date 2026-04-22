@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
@@ -110,9 +111,10 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 		var existing = db.GetTable<BindingRow>()
 			.FirstOrDefault(r => r.TagSetJson == tagSetJson && r.KeyPath == binding.KeyPath && r.IsDeleted == 0);
 
+		var aliasesJson = SerializeAliases(binding.Aliases);
 		if (existing is null)
 		{
-			var row = ToRow(binding, tagSetJson, contentHash, ts, id: 0);
+			var row = ToRow(binding, tagSetJson, contentHash, ts, aliasesJson, id: 0);
 			var newId = Convert.ToInt64(db.InsertWithIdentity(row));
 			var inserted = binding with { Id = newId, ContentHash = contentHash };
 			return new UpsertOutcome(inserted, OldHash: null);
@@ -129,6 +131,7 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 			.Set(r => r.Kind, binding.Kind.ToString())
 			.Set(r => r.ContentHash, contentHash)
 			.Set(r => r.UpdatedAt, ts)
+			.Set(r => r.AliasesJson, aliasesJson)
 			.Update();
 
 		var updated = binding with { Id = existing.Id, ContentHash = contentHash };
@@ -147,7 +150,7 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 		return affected > 0;
 	}
 
-	static BindingRow ToRow(Binding b, string tagSetJson, string contentHash, long ts, long id) => new()
+	static BindingRow ToRow(Binding b, string tagSetJson, string contentHash, long ts, string? aliasesJson, long id) => new()
 	{
 		Id = id,
 		TagSetJson = tagSetJson,
@@ -162,6 +165,7 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 		ContentHash = contentHash,
 		UpdatedAt = ts,
 		IsDeleted = 0,
+		AliasesJson = aliasesJson,
 	};
 
 	static Binding ToDomain(BindingRow r) => new()
@@ -178,7 +182,14 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 		ContentHash = r.ContentHash,
 		UpdatedAt = DateTimeOffset.FromUnixTimeMilliseconds(r.UpdatedAt),
 		IsDeleted = r.IsDeleted != 0,
+		Aliases = DeserializeAliases(r.AliasesJson),
 	};
+
+	static string? SerializeAliases(IReadOnlyDictionary<string, string>? aliases) =>
+		aliases is null or { Count: 0 } ? null : JsonSerializer.Serialize(aliases);
+
+	static Dictionary<string, string>? DeserializeAliases(string? json) =>
+		string.IsNullOrEmpty(json) ? null : JsonSerializer.Deserialize<Dictionary<string, string>>(json);
 
 	static string ComputeContentHash(Binding b)
 	{

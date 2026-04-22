@@ -37,14 +37,21 @@ public sealed class ResolvePipeline
 	}
 
 	public ResolveOutcome Resolve(IReadOnlyDictionary<string, string> tagVector) =>
-		Resolve(tagVector, allowedKeyPrefixes: null);
+		Resolve(tagVector, allowedKeyPrefixes: null, template: ResponseTemplate.Flat);
 
-	public ResolveOutcome Resolve(IReadOnlyDictionary<string, string> tagVector, IReadOnlyList<string>? allowedKeyPrefixes)
+	public ResolveOutcome Resolve(IReadOnlyDictionary<string, string> tagVector, IReadOnlyList<string>? allowedKeyPrefixes) =>
+		Resolve(tagVector, allowedKeyPrefixes, template: ResponseTemplate.Flat);
+
+	public ResolveOutcome Resolve(
+		IReadOnlyDictionary<string, string> tagVector,
+		IReadOnlyList<string>? allowedKeyPrefixes,
+		ResponseTemplate template)
 	{
 		ArgumentNullException.ThrowIfNull(tagVector);
 
 		using var root = ActivitySources.Resolve.StartActivity("yobaconf.resolve");
 		root?.SetTag("yobaconf.tag-vector.count", tagVector.Count);
+		root?.SetTag("yobaconf.template", template.ToString());
 
 		var candidates = CandidateLookup(tagVector);
 		if (allowedKeyPrefixes is { Count: > 0 })
@@ -67,8 +74,10 @@ public sealed class ResolvePipeline
 		}
 
 		var resolvedLeaves = DecryptSecrets(winners);
-		var tree = ExpandDotted(resolvedLeaves);
-		var json = CanonicalJson(tree);
+
+		var json = template == ResponseTemplate.Flat
+			? CanonicalJson(ExpandDotted(resolvedLeaves))
+			: CanonicalFlat(ApplyTemplate(winners, resolvedLeaves, template));
 		var etag = ComputeETag(json);
 
 		return new ResolveSuccess(json, etag);
@@ -221,6 +230,72 @@ public sealed class ResolvePipeline
 		}
 		return root;
 	}
+
+	// Apply non-Flat response template to the winner list → flat (key, value) pairs where
+	// key is per-template derived or, for bindings that set an alias override for this
+	// template, the literal alias.
+	static SortedDictionary<string, string> ApplyTemplate(
+		List<Binding> winners,
+		List<(string KeyPath, string ValueJson)> leaves,
+		ResponseTemplate template)
+	{
+		using var span = ActivitySources.Resolve.StartActivity("apply-template");
+		span?.SetTag("yobaconf.template", template.ToString());
+
+		var result = new SortedDictionary<string, string>(StringComparer.Ordinal);
+		var templateKey = TemplateKey(template);
+		for (var i = 0; i < winners.Count; i++)
+		{
+			var winner = winners[i];
+			var leaf = leaves[i];
+			string responseKey;
+			if (winner.Aliases is not null && winner.Aliases.TryGetValue(templateKey, out var alias))
+				responseKey = alias;
+			else
+				responseKey = ResponseTemplateParser.Derive(leaf.KeyPath, template);
+			result[responseKey] = leaf.ValueJson;
+		}
+		return result;
+	}
+
+	static string TemplateKey(ResponseTemplate t) => t switch
+	{
+		ResponseTemplate.Dotnet => "dotnet",
+		ResponseTemplate.Envvar => "envvar",
+		ResponseTemplate.EnvvarDeep => "envvar-deep",
+		_ => "flat",
+	};
+
+	static string CanonicalFlat(SortedDictionary<string, string> pairs)
+	{
+		using var span = ActivitySources.Resolve.StartActivity("canonical-json");
+		var sb = new StringBuilder();
+		sb.Append('{');
+		var first = true;
+		foreach (var (k, v) in pairs)
+		{
+			if (!first) sb.Append(',');
+			first = false;
+			sb.Append('"').Append(EscapeJsonString(k)).Append('"').Append(':').Append(v);
+		}
+		sb.Append('}');
+		return sb.ToString();
+	}
+
+	static string EscapeJsonString(string s)
+	{
+		// Template-derived keys may contain uppercase letters + underscore that the raw
+		// KeyPath slug excludes. None of them need JSON escaping under STJ's default rules
+		// (no quotes, backslashes, or control chars), so a plain quote is safe. Upper-case
+		// letters + underscores stay literal.
+		foreach (var c in s)
+			if (c is '"' or '\\' || c < 0x20)
+				return JsonEncodedTextSerialize(s);
+		return s;
+	}
+
+	static string JsonEncodedTextSerialize(string s) =>
+		System.Text.Json.JsonSerializer.Serialize(s)[1..^1]; // strip surrounding quotes
 
 	static string CanonicalJson(ResolveTree.Branch tree)
 	{

@@ -37,4 +37,13 @@ public sealed record Binding
 	public required string ContentHash { get; init; }
 	public required DateTimeOffset UpdatedAt { get; init; }
 	public bool IsDeleted { get; init; }
+
+	// Per-template alias override — spec §9.1. Dictionary keyed by template name
+	// ("dotnet", "envvar", "envvar-deep"); value is the literal response-key to emit
+	// under that template. Null / missing key → derive from KeyPath.
+	//
+	// Primary use case: platform-mandated names that don't slug-transform cleanly, e.g.
+	// `AWS_ACCESS_KEY_ID` (envvar wants literal UPPERCASE underscore), `PATH`, `HOME`.
+	// Admin writes `AliasesJson = {"envvar": "AWS_ACCESS_KEY_ID"}` on the binding.
+	public IReadOnlyDictionary<string, string>? Aliases { get; init; }
 }
