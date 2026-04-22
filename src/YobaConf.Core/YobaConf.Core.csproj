@@ -1,8 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<ItemGroup>
-		<PackageReference Include="Hocon" />
-		<PackageReference Include="Hocon.Configuration" />
 		<PackageReference Include="linq2db.SQLite.MS" />
 		<PackageReference Include="Microsoft.Extensions.Options" />
 		<PackageReference Include="YamlDotNet" />

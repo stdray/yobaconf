@@ -12,8 +12,6 @@
 		<PackageReference Include="xunit" />
 		<PackageReference Include="xunit.runner.visualstudio" />
 		<PackageReference Include="AwesomeAssertions" />
-		<PackageReference Include="Hocon" />
-		<PackageReference Include="Hocon.Configuration" />
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
 	</ItemGroup>
 
