@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-04-22 — Scope trim: multi-admin, defer paste-import + TagVocabulary, add consumer-runtime phase
+
+**Решение:** v2 spec доработан до "MVP минимум для dog-food'а". Четыре правки относительно initial v2 draft (commit `658545b`):
+
+1. **Single-admin → multi-admin.** `Users` table + `/admin/users` CRUD добавлены в core schema. Права симметричны — любой user в table имеет полный CRUD над bindings / api-keys / users / audit-log. Role-split'ы (read-only / audit-only) — post-MVP. Паттерн один-в-один заимствован из yobalog (`SqliteUserStore` + `AdminPasswordHasher` + config-fallback при пустом store).
+2. **Paste-import (JSON / YAML / `.env`) → deferred §15.1.** `/Import` UI не входит в MVP. Converter'ы `JsonFlattener` / `YamlFlattener` / `DotenvFlattener` сохраняются в кодовой базе из v1 Phase B.7 — включатся без реимплементации когда понадобится. До тех пор inline-add-row в `/Bindings` покрывает onboarding; paste — acceleration, не blocker.
+3. **TagVocabulary → deferred §15.2.** Table + `/Tags` page + required-flag + allowed-values validation. Free-form tag-keys работают корректно — dashboard dropdown'ы строятся через `SELECT DISTINCT json_extract(...)` по actually-used tag-values. Typo-catching warnings появятся когда реальные typo'ы станут проблемой.
+4. **Consumer-runtime — новая Phase C.** Основной канал потребления — sidecar CLI `yobaconf-run` (fetch → env-export → exec child). Обсуждалось в контексте "все сервисы в Docker, общий entrypoint-scheme". Alias templates (`dotnet` / `envvar` / `envvar_deep` / `flat`) — server-side transformation в resolve pipeline, клиент шлёт `?template=dotnet` и получает ready `db__host=…` pairs (никакого client-side адаптерного кода). SDK (`YobaConf.Client` .NET) переезжает в secondary ответ — для hot-reload-in-process use-case'ов, не основной путь.
+
+**Причины:**
+
+- **MVP-scope discipline.** Spec v2 initial draft пытался одновременно сделать tagged-core + paste-import + vocabulary + rollback — получалось 6+ weeks на первый deploy. Trim'аем всё что не блокирует dog-food'ability: paste-import и vocabulary включаются когда реальный сервис упирается в их отсутствие.
+- **Multi-admin реален сразу.** Один человек работает над несколькими проектами (yobalog, yobaconf, yobapub, yobaspeach, animemov-bot). Admin-сессии на нескольких машинах (laptop + VM) — tautологически multi-user даже при одном владельце. Config-admin-only fallback оставляет bootstrap path, но не долговременное решение.
+- **Docker-uniform consumption — первый класс.** Pivot-rationale от 2026-04-21 явно упоминал "все сервисы в Docker, общий entrypoint-scheme, tagged модель fits". Без runner'а consumer вынужден или embed SDK (overkill для простых случаев), или писать собственный bash-wrapper на каждый сервис. Runner — shared infra.
+- **Alias templates — server-side DRY.** Каждый consumer-ecosystem (.NET, POSIX shell, Spring, Python/pip) имеет свою convention env-vars. Client-side трансформация = N повторов логики в N SDK/скриптах с drift'ом. Server-side = single source of truth; consumer только выбирает template через query-param.
+
+**Что откатывается:**
+
+- **Phase A.7 `/Tags page` + TagVocabulary в A.1 schema.** Схема переезжает в Phase E.2 (deferred).
+- **Phase B.1 `/Import` page + A.0 сохранение paste-converters как first-class.** Import page переезжает в Phase E.1. Converters остаются в codebase как dormant — удаление требовало бы повторной имплементации при thaw'е, сохранение стоит ~0 (нет использований).
+- **`TagVocabulary` table в §3 spec + `/Tags` в §5 UI + `IsRequired`/`AllowedValues`/Description в model.** Secondary side-effect — tag-key autocomplete в `/Bindings` editor строится из fact-values, не vocabulary.
+
+**Что добавляется:**
+
+- **Phase C entire.** `yobaconf-run` CLI (new project `src/YobaConf.Runner/`), alias templates в resolve pipeline, Docker integration docs, .NET SDK rewrite. 5 items (C.1-C.5).
+- **Phase B renamed.** v2-initial Phase B ("Import + History + Rollback") → Phase B ("Admin UI minimum shippable") + Phase D ("Audit + History + Rollback"). History / rollback — второстепенный relative к admin-UI; admin-UI блокирует first deploy.
+- **§9 spec "Consumer runtime integration".** Alias table, runner flow, Dockerfile snippet, SDK как secondary.
+- **§15 spec "Deferred (post-MVP)" block.** 8 items с рациональной (почему не в MVP).
+- **Users table в §3 spec.** Schema identical к yobalog's.
+- **Plan §"v1 deliverables carried over" — добавлен DataProtection persistence.** Copy-paste fix из yobalog — cookies invalidates on redeploy без `PersistKeysToFileSystem`. Не был явно выписан, но обязателен для dog-food'а.
+
+**Порядок phase'ов:**
+
+- A (Storage + Resolve) → B (Admin UI) → **first deploy** → C (Runner + SDK) → D (Audit + History) → E (Deferred).
+- Deploy-тег двигается после закрытия B.6 (first-deploy checkpoint). До этого все коммиты на main — preview-only state.
+
+**Cross-refs:**
+
+- `doc/spec.md` v2 (updated — sections 1, 2, 3, 5, 9, 10+, 15; invariants)
+- `doc/plan.md` — complete rewrite с новыми phase'ами
+- `doc/decision-log.md` 2026-04-21 "Pivot to tagged model" — predecessor decision
+- yobalog `SqliteUserStore` + `SqliteApiKeyStore` — reference impl для Users + ApiKeys patterns
+
+---
+
 ## 2026-04-21 — Pivot to tagged bindings model (v2); HOCON выпиливается
 
 **Решение:** v1 path-tree + HOCON-as-storage модель отменяется. Новая модель — **tagged bindings**: плоская таблица `(tag-set, key, value)` triple'ов, resolve через subset-merge по tag-vector'у из request'а, fail-fast на incomparable конфликтах. HOCON удаляется **полностью** — и со storage, и с paste-import. Paste-import остаётся в форматах JSON / YAML / `.env` (уже реализованы converter'ы в v1 Phase B.7). Новая спека — `doc/spec.md` v2; старый v1 (path-tree) удалён из spec, остаётся в git history до момента реализации v2.
