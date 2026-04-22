@@ -38,6 +38,9 @@ public sealed class WebAppFixture : IAsyncLifetime
 		{
 			s["Admin:Username"] = AdminUsername;
 			s["Admin:PasswordHash"] = hash;
+			// 32 bytes of 0x42 base64 — shared with unit tests, lets secret bindings
+			// encrypt/decrypt in fixture-seeded scenarios.
+			s["YOBACONF_MASTER_KEY"] = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=";
 		});
 
 		// Warm-up: force DI singletons (SqliteBindingStore / SqliteApiKeyStore / SqliteUserStore)

@@ -1,0 +1,129 @@
+@page "/Bindings"
+@model YobaConf.Web.Pages.Bindings.IndexModel
+@{
+	ViewData["Title"] = "Bindings";
+}
+
+<div class="flex items-center gap-3 mb-4">
+	<h1 class="text-xl font-semibold" data-testid="bindings-title">Bindings (@Model.Rows.Count)</h1>
+	<a asp-page="/Bindings/Edit" class="btn btn-sm btn-primary ml-auto" data-testid="bindings-new">+ New binding</a>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="bindings-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3" data-testid="bindings-success">@Model.SuccessMessage</div>
+}
+
+<form method="get" class="mb-4 flex flex-wrap items-end gap-2" data-testid="bindings-filter-form">
+	<label class="form-control">
+		<span class="label-text">Key path</span>
+		<input type="text" name="q" value="@Model.KeyQuery"
+			placeholder="db.host, cache.*"
+			class="input input-bordered input-sm font-mono text-xs"
+			data-testid="bindings-filter-key" />
+	</label>
+
+	@foreach (var tagKey in Model.FacetKeys)
+	{
+		<label class="form-control">
+			<span class="label-text font-mono text-xs">@tagKey</span>
+			<select name="t.@tagKey" class="select select-bordered select-sm font-mono text-xs"
+				data-testid="bindings-filter-tag" data-tag-key="@tagKey">
+				<option value="" selected="@(!Model.TagFilter.ContainsKey(tagKey))">(any)</option>
+				@foreach (var v in Model.FacetValues[tagKey])
+				{
+					<option value="@v" selected="@(Model.TagFilter.TryGetValue(tagKey, out var cur) && cur == v)">@v</option>
+				}
+			</select>
+		</label>
+	}
+
+	<button type="submit" class="btn btn-sm" data-testid="bindings-filter-apply">Apply</button>
+	<a href="/Bindings" class="btn btn-sm btn-ghost" data-testid="bindings-filter-clear">Clear</a>
+</form>
+
+@if (Model.Rows.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="bindings-empty">No bindings match the current filter.</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="bindings-table">
+			<thead>
+				<tr>
+					<th>TagSet</th>
+					<th>Key</th>
+					<th>Value</th>
+					<th>Updated</th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var r in Model.Rows)
+				{
+					var isRevealed = Model.RevealedId == r.Binding.Id;
+					<tr data-testid="bindings-row" data-binding-id="@r.Binding.Id">
+						<td class="font-mono text-xs" data-testid="bindings-tagset">
+							@foreach (var kv in r.Binding.TagSet)
+							{
+								<span class="badge badge-sm mr-1">@kv.Key=@kv.Value</span>
+							}
+							@if (r.Binding.TagSet.Count == 0)
+							{
+								<span class="opacity-50">(root)</span>
+							}
+						</td>
+						<td class="font-mono text-xs text-primary" data-testid="bindings-key">@r.Binding.KeyPath</td>
+						<td class="font-mono text-xs" data-testid="bindings-value">
+							@if (r.Binding.Kind == BindingKind.Secret)
+							{
+								if (isRevealed)
+								{
+									<span class="bg-warning/10 rounded px-1" data-testid="bindings-secret-revealed">@r.RevealedValue</span>
+								}
+								else
+								{
+									<span data-testid="bindings-secret-masked">••••••</span>
+									<a asp-page="/Bindings/Index" asp-route-revealId="@r.Binding.Id"
+										asp-route-q="@Model.KeyQuery" class="btn btn-xs btn-ghost ml-2"
+										data-testid="bindings-secret-reveal" title="Reveal for 10s">👁</a>
+								}
+							}
+							else
+							{
+								<span data-testid="bindings-plain-value">@r.Binding.ValuePlain</span>
+							}
+						</td>
+						<td class="text-xs opacity-60" data-testid="bindings-updated">@r.Binding.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+						<td>
+							<a asp-page="/Bindings/Edit" asp-route-id="@r.Binding.Id" class="btn btn-xs btn-ghost"
+								data-testid="bindings-edit">Edit</a>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+<script>
+	// 10-second auto-hide for revealed secrets: if the URL carries ?revealId=..., rewrite
+	// it out after the timeout so a reload doesn't resurrect the plaintext.
+	(() => {
+		const params = new URLSearchParams(window.location.search);
+		if (!params.has('revealId')) return;
+		setTimeout(() => {
+			params.delete('revealId');
+			const url = window.location.pathname + (params.toString() ? '?' + params : '');
+			window.history.replaceState({}, '', url);
+			document.querySelectorAll('[data-testid="bindings-secret-revealed"]').forEach(el => {
+				el.textContent = '••••••';
+			});
+		}, 10000);
+	})();
+</script>
