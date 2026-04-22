@@ -1,0 +1,79 @@
+@page "/History"
+@model YobaConf.Web.Pages.HistoryModel
+@{
+	ViewData["Title"] = "History";
+}
+
+<h1 class="text-xl font-semibold mb-4" data-testid="history-title">History</h1>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="history-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3" data-testid="history-success">@Model.SuccessMessage</div>
+}
+
+<form method="get" class="mb-4 flex flex-wrap items-end gap-2" data-testid="history-filter-form">
+	<label class="form-control">
+		<span class="label-text">Entity</span>
+		<select name="entity" class="select select-bordered select-sm" data-testid="history-filter-entity">
+			<option value="" selected="@(Model.EntityFilter is null)">(any)</option>
+			<option value="Binding" selected="@(Model.EntityFilter == AuditEntityType.Binding)">Binding</option>
+			<option value="ApiKey" selected="@(Model.EntityFilter == AuditEntityType.ApiKey)">ApiKey</option>
+			<option value="User" selected="@(Model.EntityFilter == AuditEntityType.User)">User</option>
+		</select>
+	</label>
+	<label class="form-control">
+		<span class="label-text">Actor</span>
+		<input type="text" name="actor" value="@Model.ActorFilter"
+			class="input input-bordered input-sm font-mono text-xs"
+			data-testid="history-filter-actor" />
+	</label>
+	<label class="form-control">
+		<span class="label-text">Key contains</span>
+		<input type="text" name="key" value="@Model.KeyFilter"
+			placeholder="db.host"
+			class="input input-bordered input-sm font-mono text-xs"
+			data-testid="history-filter-key" />
+	</label>
+	<button type="submit" class="btn btn-sm" data-testid="history-filter-apply">Apply</button>
+	<a href="/History" class="btn btn-sm btn-ghost" data-testid="history-filter-clear">Clear</a>
+</form>
+
+@if (Model.EntriesByDay.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="history-empty">No entries match.</div>
+}
+else
+{
+	@foreach (var day in Model.EntriesByDay)
+	{
+		<section class="mb-5" data-testid="history-day" data-day="@day.Key">
+			<h2 class="text-sm uppercase opacity-70 mb-2">@day.Key</h2>
+			<div class="border border-base-300 rounded divide-y divide-base-300">
+				@foreach (var e in day.Value)
+				{
+					<div class="flex items-center gap-2 p-2 text-xs font-mono"
+						data-testid="history-row" data-entry-id="@e.Id"
+						data-entity="@e.EntityType" data-action="@e.Action">
+						<span class="opacity-60 w-16">@e.At.ToString("HH:mm:ss")</span>
+						<span class="badge badge-sm">@e.EntityType</span>
+						<span class="badge badge-sm badge-outline">@e.Action</span>
+						<span class="text-primary min-w-0 break-all flex-1" data-testid="history-key">@(e.KeyPath ?? "—")</span>
+						<span class="opacity-70" data-testid="history-actor">@e.Actor</span>
+						@if (HistoryModel.IsRollbackEligible(e))
+						{
+							<form method="post" asp-page-handler="Rollback" class="inline"
+								onsubmit="return confirm('Roll back to @e.Action on @e.KeyPath at @e.At?');">
+								<input type="hidden" name="id" value="@e.Id" />
+								<button type="submit" class="btn btn-xs btn-ghost" data-testid="history-rollback">Rollback</button>
+							</form>
+						}
+					</div>
+				}
+			</div>
+		</section>
+	}
+}
