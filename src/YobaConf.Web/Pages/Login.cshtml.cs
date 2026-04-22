@@ -6,21 +6,27 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
 using YobaConf.Core;
+using YobaConf.Core.Auth;
 
 namespace YobaConf.Web.Pages;
 
-// Antiforgery disabled for Phase A — login is pre-auth (no session cookie to protect).
-// Import page (the only other mutating Razor form in Phase A) has it off too for symmetry
-// and to keep the paste-import flow simple. Phase B's admin CRUD will wire antiforgery in
-// when the form surface grows (mirrors yobalog's trajectory — they also started with
-// IgnoreAntiforgeryToken on Login and re-enabled when admin CRUD expanded).
+// DB-users-first, config-admin fallback (bootstrap + recovery path). Once the first DB
+// user exists the config credentials stop being honored; delete the last DB user to
+// revert. Antiforgery is ON from B.1 now that admin CRUD brings mutating forms on-shore.
 [AllowAnonymous]
-[IgnoreAntiforgeryToken]
 public sealed class LoginModel : PageModel
 {
 	readonly AdminOptions _admin;
+	readonly IUserStore? _users;
 
-	public LoginModel(IOptions<AdminOptions> options) => _admin = options.Value;
+	// Optional IUserStore — integration tests that don't configure `Storage:DataDirectory`
+	// skip user-store DI and rely on the config path. Runtime with Storage configured always
+	// has it wired.
+	public LoginModel(IOptions<AdminOptions> options, IUserStore? users = null)
+	{
+		_admin = options.Value;
+		_users = users;
+	}
 
 	[BindProperty(SupportsGet = true)]
 	public string? ReturnUrl { get; set; }
@@ -28,40 +34,46 @@ public sealed class LoginModel : PageModel
 	public string? Username { get; set; }
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet()
-	{
-	}
+	public void OnGet() { }
 
 	public async Task<IActionResult> OnPostAsync(string? username, string? password, string? returnUrl)
 	{
 		Username = username;
 		ReturnUrl = returnUrl;
 
-		if (string.IsNullOrEmpty(_admin.Username) || string.IsNullOrEmpty(_admin.PasswordHash))
+		if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
 		{
-			ErrorMessage = "Admin credentials are not configured. Set Admin:Username and Admin:PasswordHash in appsettings.";
+			ErrorMessage = "Enter a username and password.";
 			return Page();
 		}
 
-		// Username compare is plain ordinal — usernames aren't considered secret.
-		// Password verify is constant-time inside AdminPasswordHasher.Verify.
-		var usernameMatches = string.Equals(_admin.Username, username, StringComparison.Ordinal);
-		var passwordMatches = !string.IsNullOrEmpty(password)
-			&& AdminPasswordHasher.Verify(password, _admin.PasswordHash);
-
-		if (!usernameMatches || !passwordMatches)
+		if (!Authenticate(username, password))
 		{
 			ErrorMessage = "Invalid username or password.";
 			return Page();
 		}
 
 		var identity = new ClaimsIdentity(
-			[new Claim(ClaimTypes.Name, _admin.Username)],
+			[new Claim(ClaimTypes.Name, username)],
 			CookieAuthenticationDefaults.AuthenticationScheme);
 		await HttpContext.SignInAsync(
 			CookieAuthenticationDefaults.AuthenticationScheme,
 			new ClaimsPrincipal(identity));
 
-		return LocalRedirect(string.IsNullOrEmpty(returnUrl) ? "/" : returnUrl);
+		return !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl)
+			? LocalRedirect(returnUrl)
+			: LocalRedirect("/");
+	}
+
+	bool Authenticate(string username, string password)
+	{
+		if (_users is not null && _users.HasAny())
+			return _users.VerifyPassword(username, password);
+
+		// DB empty → config-admin path. Both username + hash must be set.
+		if (string.IsNullOrEmpty(_admin.Username) || string.IsNullOrEmpty(_admin.PasswordHash))
+			return false;
+		return string.Equals(_admin.Username, username, StringComparison.Ordinal)
+			&& AdminPasswordHasher.Verify(password, _admin.PasswordHash);
 	}
 }

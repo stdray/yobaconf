@@ -34,9 +34,6 @@
 		<Using Include="YobaConf.Core" />
 		<Using Include="Microsoft.Playwright" />
 		<Using Include="Microsoft.Playwright.Assertions" Static="true" />
-		<!-- Infrastructure + Pages recreated in B.1 once login flow + page-objects are back.
-		     Until then no tests live in this project so removed Using entries point at
-		     non-existent namespaces and the compiler emits CS0234. -->
 	</ItemGroup>
 
 	<ItemGroup>

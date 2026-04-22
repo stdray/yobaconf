@@ -57,6 +57,13 @@ public static class YobaConfApp
 			builder.Services.AddSingleton<SqliteApiKeyStore>();
 			builder.Services.AddSingleton<Core.Auth.IApiKeyStore>(sp => sp.GetRequiredService<SqliteApiKeyStore>());
 			builder.Services.AddSingleton<Core.Auth.IApiKeyAdmin>(sp => sp.GetRequiredService<SqliteApiKeyStore>());
+
+			// Users store — cookie-auth admin accounts. Login falls back to config-admin when
+			// the table is empty (bootstrap); once the first DB user lands the config path is
+			// ignored until the DB is emptied again.
+			builder.Services.AddSingleton<SqliteUserStore>();
+			builder.Services.AddSingleton<Core.Auth.IUserStore>(sp => sp.GetRequiredService<SqliteUserStore>());
+			builder.Services.AddSingleton<Core.Auth.IUserAdmin>(sp => sp.GetRequiredService<SqliteUserStore>());
 		}
 
 		// AES-256-GCM secrets encryption — master key from env var YOBACONF_MASTER_KEY

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Resolve;
@@ -16,7 +17,10 @@ public sealed class TracingTests : IDisposable
 	static readonly ActivitySource ProbeSource = new("YobaConf.Tests.Probe");
 
 	readonly ActivityListener _listener;
-	readonly List<Activity> _captured = [];
+	// ConcurrentBag — parallel test classes (from SqliteBindingStoreTests, ResolvePipelineTests)
+	// also emit to YobaConf.Storage.Sqlite / YobaConf.Resolve sources; their spans flow into
+	// THIS listener (it's process-wide) from other threads. List<T>.Add isn't thread-safe.
+	readonly ConcurrentBag<Activity> _captured = [];
 
 	public TracingTests()
 	{
