@@ -24,7 +24,7 @@
 - **Rejected variants** Tree view — Miller columns (Variant B) + grouped cards (Variant C) отброшены: не подходят под yobaconf'овский scale (2-4 depth, до сотен нод). Берём indented tree (Variant A).
 
 **Что отбрасываем:**
-- Custom palette (`#f5f1e8` paper + `oklch(0.65 0.12 30)` coral) — нарушает "кастомизация запрещена". DaisyUI стоковая theme (`business` рекомендована — warm accent под long админ-сессии).
+- Custom palette (`#f5f1e8` paper + `oklch(0.65 0.12 30)` coral) — нарушает "кастомизация запрещена". Активная тема — `dark` (уже зафиксирована в `_Layout.cshtml` + `tailwind.config.js`, не трогаем). Semantic-классы DaisyUI (`bg-base-100` / `text-primary` / etc.) — никаких hex-хардкодов в Razor.
 - Caveat cursive display-font — wireframe-декор, в hi-fi система-sans или DaisyUI default.
 - SVG feTurbulence+feDisplacementMap "rough" filter — чисто sketchy-эстетика wireframe'а.
 - Inline styles — всё через Tailwind utility + DaisyUI component-классы.
