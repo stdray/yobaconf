@@ -8,8 +8,10 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using YobaConf.Core;
+using YobaConf.Core.Bindings;
 using YobaConf.Core.Observability;
 using YobaConf.Core.Security;
+using YobaConf.Core.Storage;
 
 namespace YobaConf.Web;
 
@@ -37,6 +39,19 @@ public static class YobaConfApp
 		});
 
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
+
+		// SQLite-backed bindings store (A.1). Config-gated so integration tests without
+		// `Storage:DataDirectory` set boot without a store — /ready then returns 200 as
+		// "service up, no store". Prod appsettings ships `Storage:DataDirectory=./data`;
+		// GitHub Actions / Dockerfile override to an absolute mounted volume.
+		var storageDir = builder.Configuration["Storage:DataDirectory"];
+		if (!string.IsNullOrWhiteSpace(storageDir))
+		{
+			builder.Services.Configure<SqliteBindingStoreOptions>(builder.Configuration.GetSection("Storage"));
+			builder.Services.AddSingleton<SqliteBindingStore>();
+			builder.Services.AddSingleton<IBindingStore>(sp => sp.GetRequiredService<SqliteBindingStore>());
+			builder.Services.AddSingleton<IBindingStoreAdmin>(sp => sp.GetRequiredService<SqliteBindingStore>());
+		}
 
 		// AES-256-GCM secrets encryption — master key from env var YOBACONF_MASTER_KEY
 		// (base64, 32 bytes decoded). Empty/missing = encryptor not registered; A.2 resolve
@@ -143,11 +158,27 @@ public static class YobaConfApp
 		app.MapMethods("/health", ["GET", "HEAD"], () => Results.Ok(new { status = "healthy" }))
 			.AllowAnonymous();
 
-		// Readiness probe — v2 placeholder until A.1 lands SqliteBindingStore. Returns 200
-		// unconditionally since there's no store to probe. A.1 will replace with a proper
-		// `IBindingStore.ListTagSets(1 row)` style touch.
-		app.MapMethods("/ready", ["GET", "HEAD"], () => Results.Ok(new { status = "ready" }))
-			.AllowAnonymous();
+		// Readiness probe — if the SQLite store is registered, touch it to confirm the
+		// file + schema are reachable. Unregistered store (integration tests, or the very
+		// early bootstrap state) still reports ready.
+		app.MapMethods("/ready", ["GET", "HEAD"], (IServiceProvider sp) =>
+		{
+			var store = sp.GetService<IBindingStore>();
+			if (store is null)
+				return Results.Ok(new { status = "ready" });
+			try
+			{
+				_ = store.ListActive();
+				return Results.Ok(new { status = "ready" });
+			}
+			catch (Exception ex)
+			{
+				return Results.Problem(
+					statusCode: StatusCodes.Status503ServiceUnavailable,
+					title: "storage unavailable",
+					detail: ex.Message);
+			}
+		}).AllowAnonymous();
 
 		// Build provenance — public. GitVersion injects via Docker env vars.
 		app.MapMethods("/version", ["GET", "HEAD"], () => Results.Ok(new
