@@ -19,12 +19,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ─── Fast lane: frontend checks + unit tests (PR-only) ───
+  # ─── PR validation: lint + unit tests + E2E in one sequential job ───
+  # Merged from separate `test` + `e2e` jobs: with NuGet + Playwright caches warm,
+  # the setup + restore budget is tiny, so the old parallel gain is marginal while
+  # one job means one runner, one cache fetch, one log, and lint failure cancels
+  # the expensive E2E run early. Cake's CI target chains Test → E2ETest reusing
+  # the Build output.
+  #
   # On push to main / deploy tag the `publish` job re-runs unit tests via Cake's
-  # DockerPush → DockerSmoke → Docker → Test dependency chain, so there's no need
-  # to repeat the standalone `test` job there. E2E is explicitly PR-only (separate
-  # `e2e` job below): post-merge runs trust that the PR already proved it green.
-  test:
+  # DockerPush → DockerSmoke → Docker → Test dependency chain, so this job is
+  # PR-only and post-merge runs trust the PR gate.
+  ci:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -39,6 +44,25 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      # NuGet package cache — biggest win on cold miss. Key on any csproj + central
+      # package versions + global.json; any add/upgrade/SDK-bump forces a fresh restore.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Playwright Chromium (~170MB). Key on Directory.Packages.props so
+      # Microsoft.Playwright version bumps invalidate cleanly.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Bun install (frontend)
         working-directory: src/YobaConf.Web
@@ -68,49 +92,10 @@ jobs:
           dotnet restore YobaConf.slnx
           dotnet format YobaConf.slnx --verify-no-changes --no-restore
 
-      - name: Cake test target
+      - name: Cake CI target (Test + E2E)
         run: |
           chmod +x ./build.sh
-          ./build.sh --target=Test
-
-  # ─── Slow lane: Playwright E2E (PR-only, see `test` job comment) ───
-  e2e:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Bun install (frontend)
-        working-directory: src/YobaConf.Web
-        run: bun install --frozen-lockfile
-
-      # Cache Playwright browsers across runs. Chromium download is ~170MB; hashing
-      # Directory.Packages.props invalidates on Microsoft.Playwright version bumps.
-      # Path `~/.cache/ms-playwright` is where `playwright.ps1 install chromium`
-      # drops browsers on Linux runners (confirmed against yobalog's working cache).
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
-      # E2ETest target handles its own Build dependency and Chromium install (cached above).
-      - name: Cake E2ETest target
-        run: |
-          chmod +x ./build.sh
-          ./build.sh --target=E2ETest
+          ./build.sh --target=CI
 
       - name: Upload trace artifacts on failure
         if: failure()
@@ -122,7 +107,7 @@ jobs:
 
   # ─── Docker build + push to ghcr.io (main pushes + deploy tag) ───
   # Cake's DockerPush chain covers Test and E2ETest — self-contained pipeline.
-  # `test` / `e2e` jobs only run on PRs and `publish` only on push events, no overlap.
+  # `ci` job only runs on PRs and `publish` only on push events, no overlap.
   publish:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -141,8 +126,15 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
       # DockerPush chain includes E2ETest → Chromium download via playwright.ps1.
-      # Shared cache with the PR-only `e2e` job; key bumps when Microsoft.Playwright
+      # Shared cache key with the PR-only ci job; bumps when Microsoft.Playwright
       # version changes in Directory.Packages.props.
       - name: Cache Playwright browsers
         uses: actions/cache@v4
@@ -152,6 +144,13 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
+      # buildx with the docker-container driver is required for `type=gha` cache
+      # export — default docker daemon only supports inline/registry cache backends.
+      # Cake's DockerBuildXBuild invokes the active builder, so no explicit name
+      # plumbing is needed; `setup-buildx-action` sets the created builder as default.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -159,13 +158,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # --dockerCacheFrom/To=type=gha piggyback on actions/cache's GitHub-hosted
+      # storage (distinct namespace from actions/cache keys — managed by buildx).
+      # mode=max includes all intermediate layers, not just the final image — bigger
+      # cache, faster incremental builds since restore+publish layers are reusable
+      # as long as csproj/package-lock/COPY'd source hasn't changed.
       - name: Cake DockerPush (build + smoke + push)
         id: publish
         run: |
           set -euo pipefail
           chmod +x ./build.sh
           TAG_FILE="$RUNNER_TEMP/docker-tag.txt"
-          ./build.sh --target=DockerPush --dockerPush=true --ghcrRepository=${{ github.repository }} --dockerTagOutput="$TAG_FILE"
+          ./build.sh --target=DockerPush \
+            --dockerPush=true \
+            --ghcrRepository=${{ github.repository }} \
+            --dockerTagOutput="$TAG_FILE" \
+            --dockerCacheFrom=type=gha \
+            --dockerCacheTo=type=gha,mode=max
           echo "dockerTag=$(cat "$TAG_FILE")" >> "$GITHUB_OUTPUT"
 
   # ─── Deploy via SSH (only on manual `deploy` tag push) ───
