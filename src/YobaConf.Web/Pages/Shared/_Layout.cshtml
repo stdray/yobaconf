@@ -16,11 +16,12 @@
 <body class="min-h-full">
 	<div class="navbar bg-base-200 border-b border-base-300">
 		<div class="mx-auto max-w-6xl w-full px-4 flex gap-6 items-center">
-			@* v2 Phase A skeleton — /Bindings, /admin/* nav links land with B.2-B.5. Home link
-			   stays on "/" (no Index page yet; Login redirect-target handles the auth gate). *@
 			<a class="text-lg font-semibold" href="/" data-testid="nav-home">YobaConf</a>
 			@if (User.Identity?.IsAuthenticated == true)
 			{
+				<a class="link text-sm" href="/Bindings" data-testid="nav-bindings">Bindings</a>
+				<a class="link text-sm" href="/admin/users" data-testid="nav-users">Users</a>
+				<a class="link text-sm" href="/admin/api-keys" data-testid="nav-api-keys">API keys</a>
 				<form method="post" action="/Logout" class="ml-auto flex items-center gap-3">
 					<span class="text-sm opacity-70" data-testid="nav-username">@User.Identity.Name</span>
 					<button type="submit" data-testid="logout-submit" class="btn btn-xs btn-ghost">Sign out</button>

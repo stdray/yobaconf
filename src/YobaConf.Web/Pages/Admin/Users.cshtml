@@ -1,0 +1,73 @@
+@page "/admin/users"
+@model YobaConf.Web.Pages.Admin.UsersModel
+@{
+	ViewData["Title"] = "Users";
+}
+
+<div class="mb-4 text-sm">
+	<a href="/" class="link opacity-70 hover:opacity-100" data-testid="back-to-index">← Home</a>
+</div>
+
+<h1 class="text-xl font-semibold mb-4" data-testid="users-title">Users</h1>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="users-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3" data-testid="users-success">@Model.SuccessMessage</div>
+}
+
+<section class="mb-6">
+	<h2 class="text-sm uppercase opacity-70 mb-2">Create user</h2>
+	<form method="post" asp-page-handler="Create" autocomplete="off" class="flex items-end gap-2" data-testid="users-create-form">
+		<label class="form-control flex-1">
+			<span class="label-text">Username</span>
+			<input type="text" name="username" autocomplete="off" required
+				class="input input-bordered input-sm font-mono text-xs"
+				data-testid="users-create-username" />
+		</label>
+		<label class="form-control flex-1">
+			<span class="label-text">Password</span>
+			<input type="password" name="password" autocomplete="new-password" required
+				class="input input-bordered input-sm font-mono text-xs"
+				data-testid="users-create-password" />
+		</label>
+		<button type="submit" class="btn btn-sm btn-primary" data-testid="users-create-submit">Create</button>
+	</form>
+</section>
+
+<section>
+	<h2 class="text-sm uppercase opacity-70 mb-2">Active users (@Model.Users.Count)</h2>
+	@if (Model.Users.Count == 0)
+	{
+		<div class="text-xs opacity-60 italic" data-testid="users-empty">
+			No DB users — login falls back to config-admin. Create the first user to lock the config path.
+		</div>
+	}
+	else
+	{
+		<div class="border border-base-300 rounded divide-y divide-base-300" data-testid="users-list">
+			@foreach (var u in Model.Users)
+			{
+				<div class="flex items-center gap-2 p-2" data-testid="users-row" data-user-username="@u.Username">
+					<span class="font-mono text-xs text-primary flex-1" data-testid="users-username">@u.Username</span>
+					<span class="text-xs opacity-60" data-testid="users-created">@u.CreatedAt.ToString("yyyy-MM-dd HH:mm")</span>
+					@if (Model.Users.Count > 1)
+					{
+						<form method="post" asp-page-handler="Delete" class="inline"
+							onsubmit="return confirm('Delete user @u.Username?');">
+							<input type="hidden" name="username" value="@u.Username" />
+							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="users-delete">Delete</button>
+						</form>
+					}
+					else
+					{
+						<span class="text-xs opacity-40 italic" data-testid="users-delete-blocked" title="Cannot delete the last user">last</span>
+					}
+				</div>
+			}
+		</div>
+	}
+</section>
