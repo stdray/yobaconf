@@ -1,0 +1,73 @@
+@page "/Bindings/Edit"
+@model YobaConf.Web.Pages.Bindings.EditModel
+@{
+	ViewData["Title"] = Model.IsCreate ? "New binding" : "Edit binding";
+}
+
+<div class="mb-4 text-sm">
+	<a href="/Bindings" class="link opacity-70 hover:opacity-100" data-testid="back-to-bindings">← All bindings</a>
+</div>
+
+<h1 class="text-xl font-semibold mb-4" data-testid="edit-title">@(Model.IsCreate ? "New binding" : "Edit binding")</h1>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="edit-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.ConflictMessage))
+{
+	<div class="alert alert-warning mb-3" data-testid="edit-conflict">@Model.ConflictMessage</div>
+}
+
+<form method="post" autocomplete="off" class="grid grid-cols-1 gap-3 max-w-2xl" data-testid="edit-form">
+	<input type="hidden" name="id" value="@Model.BindingId" />
+
+	<label class="form-control">
+		<span class="label-text">Tags (one <code class="font-mono text-xs">key=value</code> per line)</span>
+		<textarea name="tags" rows="3"
+			class="textarea textarea-bordered font-mono text-xs"
+			placeholder="env=prod&#10;project=yobapub"
+			data-testid="edit-tags">@Model.TagsText</textarea>
+	</label>
+
+	<label class="form-control">
+		<span class="label-text">Key path</span>
+		<input type="text" name="keyPath" value="@Model.KeyPath" required
+			placeholder="db.host"
+			class="input input-bordered input-sm font-mono text-xs"
+			data-testid="edit-key" />
+	</label>
+
+	<div class="form-control">
+		<span class="label-text mb-1">Kind</span>
+		<div class="flex gap-4">
+			<label class="flex items-center gap-2">
+				<input type="radio" name="kind" value="Plain" checked="@(Model.Kind == BindingKind.Plain)"
+					class="radio radio-sm" data-testid="edit-kind-plain" />
+				<span>Plain</span>
+			</label>
+			<label class="flex items-center gap-2">
+				<input type="radio" name="kind" value="Secret" checked="@(Model.Kind == BindingKind.Secret)"
+					class="radio radio-sm" data-testid="edit-kind-secret" />
+				<span>Secret</span>
+			</label>
+		</div>
+	</div>
+
+	<label class="form-control">
+		<span class="label-text">Value</span>
+		<textarea name="value" rows="3"
+			class="textarea textarea-bordered font-mono text-xs"
+			placeholder='"string", 42, true, null, or ["a","b"]'
+			data-testid="edit-value">@Model.ValueText</textarea>
+		<span class="text-xs opacity-60 mt-1">
+			Plain values are stored JSON-encoded verbatim — quote strings yourself
+			(<code>"prod"</code> not <code>prod</code>). Secrets are encrypted before storage.
+		</span>
+	</label>
+
+	<div class="flex gap-2">
+		<button type="submit" class="btn btn-sm btn-primary" data-testid="edit-save">Save</button>
+		<a href="/Bindings" class="btn btn-sm btn-ghost" data-testid="edit-cancel">Cancel</a>
+	</div>
+</form>
