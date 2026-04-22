@@ -30,6 +30,31 @@ public class NodePathTests
 		NodePath.ParseDb("$system/yobaconf").ToDbPath().Should().Be("$system/yobaconf");
 
 	[Fact]
+	public void ParseUrl_DotInSegment_ErrorMessage_MentionsSeparator()
+	{
+		// Filename-with-extension ("logger.hocon") is a common user mistake — they expect
+		// node paths to model folders+files. The error should point them at the cause.
+		var act = () => NodePath.ParseUrl("xxx.logger.hocon");
+		// ParseUrl splits on dots so the offending raw segment here is 'hocon' — which is
+		// actually a valid slug. Test via ParseDb where the dot is in-segment:
+		FluentActions.Invoking(() => NodePath.ParseDb("xxx/logger.hocon"))
+			.Should().Throw<ArgumentException>()
+			.WithMessage("*cannot contain '.'*separator*");
+	}
+
+	[Fact]
+	public void ParseDb_Uppercase_ErrorMessage_MentionsLowercase() =>
+		FluentActions.Invoking(() => NodePath.ParseDb("xxx/LoggerConfig"))
+			.Should().Throw<ArgumentException>()
+			.WithMessage("*lowercase*");
+
+	[Fact]
+	public void ParseDb_Underscore_ErrorMessage_PointsToDash() =>
+		FluentActions.Invoking(() => NodePath.ParseDb("xxx/logger_config"))
+			.Should().Throw<ArgumentException>()
+			.WithMessage("*cannot contain '_'*use '-'*");
+
+	[Fact]
 	public void Parent_WalksUpOneSegment() =>
 		NodePath.ParseDb("a1/b2/c3").Parent.Should().Be(NodePath.ParseDb("a1/b2"));
 

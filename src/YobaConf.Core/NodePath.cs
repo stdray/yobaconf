@@ -72,9 +72,22 @@ public readonly partial record struct NodePath
 		foreach (var seg in segments)
 		{
 			if (!SegmentRegex().IsMatch(seg))
+			{
+				// Friendly hint for two common mistakes:
+				//   1. Dots inside a segment (thinking of file extensions) — `.` is reserved
+				//      as the external path separator.
+				//   2. Underscores / uppercase — spec §8 slugs are lowercase + dash only.
+				var hint = seg.Contains('.', StringComparison.Ordinal)
+					? " — segments cannot contain '.' (it's the external path separator; use '-' instead, e.g. 'logger-config')"
+					: seg.Any(c => char.IsUpper(c))
+						? " — segments must be lowercase"
+						: seg.Contains('_', StringComparison.Ordinal)
+							? " — segments cannot contain '_'; use '-' instead"
+							: " — must be 2-40 chars, lowercase letters/digits/dashes, starting with a letter or digit";
 				throw new ArgumentException(
-					$"Invalid path segment '{seg}' in '{path}': must match ^\\$?[a-z0-9][a-z0-9-]{{1,39}}$",
+					$"Invalid path segment '{seg}' in '{path}'{hint}",
 					nameof(path));
+			}
 		}
 		return new NodePath(separator == '/' ? path : string.Join('/', segments));
 	}

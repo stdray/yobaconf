@@ -59,7 +59,7 @@
 		}
 		else
 		{
-			<div class="alert alert-warning" data-testid="node-fallthrough-notice">
+			<div class="alert alert-warning flex-col items-stretch gap-3" data-testid="node-fallthrough-notice">
 				<span>
 					No node at this exact path.
 					@if (Model.ResolvedFromPath is not null)
@@ -72,6 +72,10 @@
 						</span>
 					}
 				</span>
+				<form method="post" asp-page-handler="CreateEmpty" class="flex items-center gap-2">
+					<input type="hidden" name="path" value="@urlPath" />
+					<button type="submit" class="btn btn-xs btn-primary" data-testid="node-create-empty">Create empty node here</button>
+				</form>
 			</div>
 		}
 	</section>
@@ -139,12 +143,17 @@
 	<section data-testid="secrets-section">
 		<h2 class="text-sm uppercase opacity-70 mb-2">Secrets (@Model.Secrets.Count)</h2>
 
-		<form method="post" asp-page-handler="AddSecret" class="flex items-center gap-2 mb-3" data-testid="add-secret-form">
+		@* autocomplete="off" on form + "new-password" on value input stops Chromium's
+		   saved-login autofill from injecting the admin cookie-auth password here.
+		   "off" on the key input avoids form-field suggestion from unrelated fills. *@
+		<form method="post" asp-page-handler="AddSecret" class="flex items-center gap-2 mb-3" autocomplete="off" data-testid="add-secret-form">
 			<input type="hidden" name="path" value="@urlPath" />
 			<input type="text" name="newKey" placeholder="key"
+				autocomplete="off" spellcheck="false"
 				class="input input-bordered input-sm font-mono text-xs flex-1 min-w-0"
 				data-testid="add-secret-key" required />
 			<input type="password" name="newValue" placeholder="value"
+				autocomplete="new-password" spellcheck="false"
 				class="input input-bordered input-sm font-mono text-xs flex-1 min-w-0"
 				data-testid="add-secret-value" required />
 			<button type="submit" class="btn btn-sm btn-primary" data-testid="add-secret-submit">Add</button>
@@ -160,7 +169,7 @@
 				@foreach (var s in Model.Secrets)
 				{
 					var isRevealed = Model.RevealKey == s.Key;
-					<form method="post" class="flex items-center gap-2 p-2" data-testid="secret-row" data-secret-key="@s.Key">
+					<form method="post" class="flex items-center gap-2 p-2" autocomplete="off" data-testid="secret-row" data-secret-key="@s.Key">
 						<input type="hidden" name="path" value="@urlPath" />
 						<input type="hidden" name="key" value="@s.Key" />
 						<input type="hidden" name="expectedHash" value="@s.ContentHash" />
@@ -168,12 +177,14 @@
 						@if (isRevealed)
 						{
 							<input type="text" name="value" value="@Model.RevealValue"
+								autocomplete="off" spellcheck="false"
 								class="input input-bordered input-xs font-mono text-xs flex-1 min-w-0 bg-warning/10"
 								data-testid="secret-value-revealed" />
 						}
 						else
 						{
 							<input type="password" name="value" value="••••••"
+								autocomplete="new-password" spellcheck="false"
 								class="input input-bordered input-xs font-mono text-xs flex-1 min-w-0"
 								data-testid="secret-value-masked" />
 						}

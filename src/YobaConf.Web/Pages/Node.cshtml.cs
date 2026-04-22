@@ -72,6 +72,25 @@ public sealed class NodeModel : PageModel
 		return Page();
 	}
 
+	public IActionResult OnPostCreateEmpty(string? path)
+	{
+		if (!TryParse(path, out var parsed)) return BadRequest();
+		Path = parsed;
+		if (parsed.Equals(NodePath.Root))
+		{
+			TempData["Error"] = "Cannot create a node at the root path.";
+			return RedirectPostGet();
+		}
+		if (_store.FindNode(parsed) is not null)
+		{
+			// Already exists — race or user clicked twice. Just navigate.
+			return RedirectPostGet();
+		}
+		_admin.UpsertNode(parsed, string.Empty, _clock.GetUtcNow(), Actor());
+		TempData["Success"] = "Created empty node. Click Edit to add content.";
+		return RedirectPostGet();
+	}
+
 	public IActionResult OnPostUpdateNode(string? path, string? rawContent, string? expectedHash)
 	{
 		if (!TryParse(path, out var parsed)) return BadRequest();

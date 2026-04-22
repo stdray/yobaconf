@@ -9,30 +9,27 @@
 @foreach (var node in Model.Nodes)
 {
 	var isActual = !node.IsVirtual && node.Path is not null;
-	var glyph = node.IsVirtual ? "○" : (isActual ? "●" : "◌");
+	var glyph = node.IsVirtual ? "○" : "●";
 	var glyphClass = isActual ? "text-primary" : "opacity-50";
-	var dbPath = node.Path?.ToDbPath() ?? BuildVirtualPath(Model.Nodes, node);
+	var dbPath = node.Path?.ToDbPath() ?? BuildVirtualPath(node);
 	var hasChildren = node.Children.Count > 0;
+	// Virtual dirs are clickable too — /Node?path=X renders the fallthrough notice
+	// with a "Create here" affordance. Users have one obvious way to "fill in" a
+	// missing intermediate path.
+	var urlPath = node.Path?.ToUrlPath() ?? dbPath.Replace('/', '.');
 
 	<li class="border-b border-dotted border-base-300" data-path="@dbPath" data-match="1">
-		@if (isActual)
-		{
-			<a asp-page="/Node" asp-route-path="@node.Path!.Value.ToUrlPath()"
-				class="flex items-center gap-2 py-1 rounded-none"
-				style="@style"
-				data-testid="node-link">
-				<span class="font-mono text-xs @glyphClass">@glyph</span>
-				<span class="font-mono text-sm">@node.Segment</span>
-			</a>
-		}
-		else
-		{
-			<div class="flex items-center gap-2 py-1 opacity-70" style="@style">
-				<span class="font-mono text-xs @glyphClass">@glyph</span>
-				<span class="font-mono text-sm">@node.Segment</span>
-				<span class="text-xs opacity-60 ml-auto pr-3">virtual dir</span>
-			</div>
-		}
+		<a asp-page="/Node" asp-route-path="@urlPath"
+			class="flex items-center gap-2 py-1 rounded-none@(isActual ? "" : " opacity-70")"
+			style="@style"
+			data-testid="node-link">
+			<span class="font-mono text-xs @glyphClass">@glyph</span>
+			<span class="font-mono text-sm">@node.Segment</span>
+			@if (!isActual)
+			{
+				<span class="text-xs opacity-60 ml-auto pr-3">virtual dir · click to create</span>
+			}
+		</a>
 		@if (hasChildren)
 		{
 			<ul class="list-none p-0 m-0">
@@ -43,7 +40,7 @@
 }
 
 @functions {
-	static string BuildVirtualPath(IReadOnlyList<TreeNode> siblings, TreeNode self)
+	static string BuildVirtualPath(TreeNode self)
 	{
 		// Virtual nodes don't carry the canonical path — reconstruct from the first
 		// actual descendant. Used only for the data-path attribute (search filter).
