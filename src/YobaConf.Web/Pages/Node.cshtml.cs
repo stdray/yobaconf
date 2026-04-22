@@ -47,13 +47,16 @@ public sealed class NodeModel : PageModel
 
 	public string? ErrorMessage { get; private set; }
 	public string? SuccessMessage { get; private set; }
+	public string? ConflictMessage { get; private set; }
+	public bool EditMode { get; private set; }
 	public string? RevealKey { get; private set; }
 	public string? RevealValue { get; private set; }
 
-	public IActionResult OnGet(string? path, string? reveal)
+	public IActionResult OnGet(string? path, string? reveal, bool edit = false)
 	{
 		if (!TryParse(path, out var parsed)) return BadRequest();
 		Path = parsed;
+		EditMode = edit;
 		Load();
 
 		if (!string.IsNullOrEmpty(reveal))
@@ -67,6 +70,29 @@ public sealed class NodeModel : PageModel
 		}
 
 		return Page();
+	}
+
+	public IActionResult OnPostUpdateNode(string? path, string? rawContent, string? expectedHash)
+	{
+		if (!TryParse(path, out var parsed)) return BadRequest();
+		Path = parsed;
+		rawContent ??= string.Empty;
+
+		var outcome = _admin.UpsertNode(parsed, rawContent, _clock.GetUtcNow(), Actor(), expectedHash);
+		if (outcome == UpsertOutcome.Conflict)
+		{
+			// Preserve the user's in-flight edit — re-render edit mode with a conflict bar,
+			// don't discard their text. They can copy-paste out and reload if they want to
+			// see what changed.
+			EditMode = true;
+			RawContent = rawContent;
+			ConflictMessage = "This node was modified in another session since you started editing. Copy your changes, reload the page, and re-apply.";
+			Load(skipStoreRead: true);
+			return Page();
+		}
+
+		TempData["Success"] = "Saved HOCON content.";
+		return RedirectPostGet();
 	}
 
 	public IActionResult OnPostAddVariable(string? path, string? newKey, string? newValue)
@@ -194,11 +220,12 @@ public sealed class NodeModel : PageModel
 		return Content(plain, "text/plain; charset=utf-8");
 	}
 
-	void Load()
+	void Load(bool skipStoreRead = false)
 	{
 		var exact = _store.FindNode(Path);
 		NodeExists = exact is not null;
-		RawContent = exact?.RawContent ?? string.Empty;
+		if (!skipStoreRead)
+			RawContent = exact?.RawContent ?? string.Empty;
 		RawContentHash = exact?.ContentHash ?? string.Empty;
 		Variables = _store.FindVariables(Path).Where(v => !v.IsDeleted).OrderBy(v => v.Key, StringComparer.Ordinal).ToArray();
 		Secrets = _store.FindSecrets(Path).Where(s => !s.IsDeleted).OrderBy(s => s.Key, StringComparer.Ordinal).ToArray();
