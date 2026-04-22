@@ -1,151 +1,112 @@
-# YobaConf: План работ и стратегия тестирования
+# YobaConf: План работ и стратегия тестирования (v2, tagged model)
 
-## Ядро тестов — детерминизм пайплайна резолвинга
+Spec — `doc/spec.md` (v2). Pivot rationale — `doc/decision-log.md` 2026-04-21 "Pivot to tagged bindings model".
 
-Главный инвариант (spec §4): один и тот же вход (`path` + API key + состояние БД на момент запроса) обязан давать ровно один JSON-результат. Это естественно покрывается **snapshot-тестами**: фикстура (ноды + HOCON + переменные + секреты) + запрос → ожидаемый JSON. Любое расхождение = регрессия в пайплайне.
+## Ядро тестов — детерминизм resolve pipeline
 
-Snapshot — первичный инструмент, property-тесты поверх (например, scope API-ключей) — когда домен стабилизируется.
+Главный инвариант (spec §4): один и тот же вход (`tag-vector` + API key + состояние БД) обязан давать ровно один JSON-результат **или** 409 Conflict с известным diagnostic'ом. Покрывается **snapshot-тестами** (фикстура bindings + tag-vector → ожидаемый JSON/status) + **property-тестами** на subset-monotonicity (добавление more-specific binding'а никогда не ломает resolve для less-specific tag-vector'а).
 
-## Фазы
+Snapshot — первичный инструмент, property-тесты — для конфликт-lattice инвариантов.
 
-- [x] **Фаза A.0 — Bootstrap.** Репо-гигиена, тулинг, сборочный pipeline (Cake + GitVersion + Docker). Без кода приложения. Цель — задать тон один раз, чтобы не переделывать по каждому PR.
-    - [x] `.gitignore`, `.gitattributes`, `.editorconfig` скопированы из yobalog (стек идентичен: .NET 10 + bun + Tailwind; SQLite-файлы ловятся существующим `*.db` паттерном).
-    - [x] `global.json` — пин .NET 10 SDK 10.0.202 (rollForward = latestFeature), синхронно с yobalog.
-    - [x] `Directory.Build.props` на корне: `<Nullable>enable</Nullable>`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, `<AnalysisLevel>latest-recommended</AnalysisLevel>`, `<AnalysisMode>All</AnalysisMode>`, `<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>`, `<ImplicitUsings>enable</ImplicitUsings>`, `<LangVersion>latest</LangVersion>`, `<InvariantGlobalization>true</InvariantGlobalization>`.
-    - [x] `Directory.Packages.props` — Central Package Management включён. Hocon 2.0.4 + Hocon.Configuration 2.0.4 + linq2db.SQLite.MS 5.4.1 + transitive CVE pins.
-    - [x] Solution skeleton: `YobaConf.slnx` + `src/YobaConf.Core` + `src/YobaConf.Web` (минимальный Razor Pages webapp с Index + Error + `_Layout`) + `tests/YobaConf.Tests`. Общие property — в `Directory.Build.props`.
-    - [x] Фронт-бутстрап рядом с `YobaConf.Web`: `package.json` (concurrently + daisyui + tailwindcss + typescript + @biomejs/biome — monaco-editor добавится в Phase B при интеграции редактора), `tsconfig.json` со всеми strict-флагами включая `noUncheckedIndexedAccess` / `exactOptionalPropertyTypes` / `noImplicitOverride` / `noPropertyAccessFromIndexSignature`, `tailwind.config.js` (content: только `.cshtml` + `.ts`, `.cs` не сканируем — AGENTS.md запрещает HTML в .cs), заглушки `ts/admin.ts` и `ts/app.css`, `bun.lock` сгенерирован `bun install`.
-    - [x] `biome.json` — lint + format для TS; табы/ширина 2; `noExplicitAny: error`, `noNonNullAssertion: error`, `useConst: error`, `noUnusedVariables/Imports: error`; `useEditorconfig` отключён (biome не парсит `indent_size = tab`).
-    - [x] MSBuild target в `YobaConf.Web.csproj`: `BeforeTargets="Build"` + `Condition="'$(Configuration)' == 'Release'"` → `bun install --frozen-lockfile && bun run build`. В Debug MSBuild не трогает фронт.
-    - [x] Dev-loop: `./build.sh --target=Dev` (или `build.ps1 -Target Dev`) запускает `bun run dev` + `dotnet watch` в одной консоли через System.Diagnostics.Process. Ctrl+C убивает оба process-tree. Заменило двух-оконный `run_dev.ps1` (удалён).
-    - [x] CI skeleton (`.github/workflows/ci.yml`): frontend + format checks, затем `./build.sh --target=Test` → Cake pipeline (Clean → Restore → Version → Build → Test). На main-push + tag `deploy` — отдельный `publish` job: `./build.sh --target=DockerPush --dockerPush=true` (включает DockerSmoke task: curl контейнера 30s timeout). На tag `deploy` — третий job `deploy` с SSH (secrets: `DEPLOY_HOST`, `GHCR_DEPLOY_USERNAME/TOKEN`, `YOBACONF_MASTER_KEY`).
-    - [x] `GitVersion.yml` + `.config/dotnet-tools.json` (Cake.Tool 5.0.0 + GitVersion.Tool 6.4.0). Скопировано с yobapub-паттерна, `next-version: 0.1.0`.
-    - [x] `build.cake` + `build.sh` + `build.ps1` — tasks Clean/Restore/Version/Build/Test/Docker/DockerSmoke/DockerPush. См. decision-log "Build pipeline: Cake + GitVersion".
-    - [x] `src/YobaConf.Web/Dockerfile` — two-stage: SDK 10.0 + bun installer → `runtime-deps:10.0-noble-chiseled`. Self-contained linux-x64 publish. GitVersion build-args пробрасываются в env.
-    - [x] `.dockerignore` — node_modules, bin/obj, wwwroot-генерёжка, *.db, .git, tests, doc/, AGENTS/CLAUDE.md.
-    - [x] Smoke-test: всё зелёное локально — `./build.sh --target=Test` 35/35 ✓ (Clean 0.5s + Restore 0.5s + Version 0.4s + Build 1.8s + Test 1.0s = 4.2s total). Docker-target локально не проверен (Docker daemon не запущен в текущей сессии) — будет проверен первым CI-прогоном.
+## v1 deliverables, carried over
 
-- [x] **Фаза A.1 — HOCON-гейт (блокирующая проверка).** Пройдена 2026-04-21.
-    - [x] Выбран пакет: `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 от akkadotnet/HOCON. Все нужные API живут в примерах; substitution резолвится at parse-time (см. decision-log 2026-04-21 "Hocon 2.0.4 резолвит substitutions at parse-time").
-    - [x] Пакеты прописаны в `Directory.Packages.props`.
-    - [x] Smoke-test с реальным dotnet restore + dotnet test: 35/35 passed (Phase A.0 smoke-test закрыл этот пункт).
+Инфра, которая переносится как есть (см. decision-log 2026-04-21 "Pivot"):
 
-- [ ] **Фаза A — dog-food ready.** API `GET /v1/conf/{path}` с Fallthrough и резолвингом переменных (без секретов, без истории), API-ключи со scoped `RootPath`, минимальный read-only UI (дерево + просмотр HOCON + результирующий JSON), bootstrap из `appsettings.json`. На этой фазе YobaConf уже хостит конфиги для других своих проектов.
-    - [x] Доменные типы в Core готовы: `NodePath`, `HoconNode`, `Variable`, `Secret`, `VariableSet`, `IConfigStore`, `ResolveResult`, `NodeNotFoundException`. `ApiKey` — Phase A API-слой.
-    - [x] **`SqliteConfigStore`** — linq2db-бэкенд, таблицы `Nodes`, `Variables`, `Secrets` (ApiKeys/AuditLog — Phase B). WAL mode per-connection. `Path` UNIQUE на Nodes; partial `(ScopePath, Key) WHERE IsDeleted=0` UNIQUE index на Variables/Secrets. CREATE IF NOT EXISTS schema bootstrap (idempotent, replay на каждом startup'е). Admin API: Upsert/SoftDelete для Node/Variable/Secret, ContentHash = sha256 hex computed при upsert. 14 integration тестов через tmp `.db` (roundtrip, overwrite, soft-delete, resurrect, scope isolation, schema idempotency, end-to-end через ResolvePipeline).
-    - [x] **Resolve pipeline (spec §4)** — `ResolvePipeline.Resolve(NodePath, IConfigStore) → ResolveResult { Json, ETag }`. Композит: Fallthrough → VariableScopeResolver → HoconVariableRenderer → IncludePreprocessor → склейка vars+flat → `ParseString` → `HoconJsonSerializer` → sha256→16-hex ETag. 12 snapshot/e2e тестов в `ResolvePipelineTests` + 7 в `HoconVariableRendererTests`. Secrets отложены до Phase C (spec §14 "Фаза A — dog-food ready: без секретов").
-    - [ ] Snapshot-тесты по чек-листу ниже.
-    - [ ] **HOCON → JSON сериализатор** в Core — обход `HoconRoot` tree → `System.Text.Json` (`JsonNode` / `JsonDocument`). Блокер для preview-панели и snapshot-тестов резолвинга. Тесты на scalars / nested objects / arrays / substitutions / dotted-path keys / edge cases.
-    - [x] **`GET /v1/conf/{**urlPath}`** — парсит `.`-path через `NodePath.ParseUrl`, гоняет `ResolvePipeline`, отдаёт `200 OK` + JSON + ETag. Поддержка `If-None-Match` → `304 Not Modified`. Scope check через `NodePath.IsAncestorOf` до lookup'а (403 before 404). Инвалидный slug → 400.
-    - [x] **API-ключи scoped** — `IApiKeyStore` + `ConfigApiKeyStore` (plaintext в `appsettings`, master-ключи; SQLite-стор появится в Phase B). `X-YobaConf-ApiKey` header + `?apiKey=` query. Constant-time token compare через `CryptographicOperations.FixedTimeEquals`.
-    - [x] **ForwardedHeaders wiring (Caddy)** — `UseForwardedHeaders()` перед `UseHttpsRedirection`, `KnownProxies = { loopback }` только. Без этого за Caddy `HttpContext.Request.IsHttps == false`, redirect loops, Secure-cookie flag неправильный. 12 integration-тестов через `WebApplicationFactory<Program>`: 401 missing/wrong key, 403 out-of-scope + boundary (yobaapp vs yobaapplication), 404 missing node, 200 happy path, 304 ETag match, 200 на stale IfNoneMatch, dot-to-slash parse, 400 invalid slug, query-string apiKey, Fallthrough через endpoint.
-    - [~] Bootstrap из `appsettings.json` — seed admin через `AdminOptions` + `AdminPasswordHasher` (PBKDF2-SHA256 @100k iterations) + `--hash-password` CLI в `Program.cs` для генерации хэша. Мастер-AES-ключ через env var — отложен до Phase C (secrets).
-    - [x] **Минимальный read-only UI** — Razor Pages: `/Index` (дерево путей через `IConfigStore.ListNodePaths()`), `/Node?path=...` (RawContent + fallthrough-notice если ноды нет), `/Import` (paste-форма). Tailwind + DaisyUI. Cookie-auth (`AddAuthentication(Cookie)` + fallback-policy `RequireAuthenticatedUser`), PBKDF2 admin credential из appsettings. `[IgnoreAntiforgeryToken]` на Login + Import — Phase B включит CSRF. HOCON-Prism подсветка отложена в follow-up (80-строчный порт TextMate grammar).
-    - [x] **JSON preview-панель резолвинга** — `language-json` Prism block с pretty-printed JSON + ETag badge + fallthrough-link если Path не существовал и резолв ушёл на ancestor. Ошибки резолва (parse/include) показываются alert'ом.
-    - [x] **IConfigStoreAdmin interface** — отдельный write-contract (Upsert/SoftDelete). `SqliteConfigStore` имплементирует оба; DI регистрирует один singleton на оба intf'а так, чтобы resolve pipeline (`IConfigStore`) не мог мутировать, admin UI (`IConfigStoreAdmin`) мог.
-    - [x] **Import converters (Core, чистые функции):** `JsonToHoconConverter` (validate+pretty-print через `JsonDocument`), `DotenvToHoconConverter` (ручной парсер ~150 строк — quoted/unquoted/escapes/export-prefix/line-numbered errors), `YamlToHoconConverter` (YamlDotNet 17.0.1 + walker с type-inference для plain scalars: bool/null/long/double/fallback string). Единый `ImportException` wrap'ит нативные parser-exceptions. 32 теста: 6 JSON (valid/invalid/nested/array/empty/round-trip), 13 dotenv (quoted/escapes/comments/export/invalid-key/trailing-backslash), 13 YAML (mapping/sequence/nested/plain-numeric/quoted-stays-string/null-like/bool/float/escape/invalid/anchors-expanded/mixed-structure).
-    - [x] **Paste-import UI** — `/Import` форма: TargetPath + Source textarea + Format dropdown (json/yaml/env) + Preview/Save actions. Preview зовёт converter, Save дополнительно пишет `IConfigStoreAdmin.UpsertNode`. Закрывает bootstrap-поток для dog-food — оператор заливает existing `.env` / `values.yaml` без ручного переписывания в HOCON.
-    - [x] **Self-observability (logs)** — `Seq.Extensions.Logging` 9.0.0 провайдер в `ILoggingBuilder` (CLEF на `{YobaLog:ServerUrl}/api/events/raw` + `X-Seq-ApiKey`). Wiring в `Program.cs` гейтится непустым `ServerUrl` (пустой = провайдер не регистрируется; тесты сюда же попадают — user-secrets только в Development, appsettings.Testing.json нет). Dev — через `dotnet user-secrets`, prod — через `YOBALOG_SERVER_URL` + `YOBALOG_API_KEY` GitHub secrets, пробрасываются в `docker run -e YobaLog__...` через `appleboy/ssh-action` envs-passthrough (не inline `${{ }}`, иначе PBKDF2-хэш ломает bash'евый `set -u`). Workspace shared `apps-prod`. Field-taxonomy + enrichment-mechanics — `doc/logging-policy.md`. Traces/metrics — Phase C.5 (OTLP отдельно, см. `decision-log.md` 2026-04-21 "Self-observability via Seq.Extensions.Logging").
-    - [ ] **Apply logging-policy to yobaconf** — реализация policy из `doc/logging-policy.md`: scope-middleware для static-props (`App`/`Env`/`Ver`/`Sha`/`Host`/`Ip`/`User`), `UseHttpLogging` с `UseWhen`-skip'ом `/health`+`/ready`, ActivityTrackingOptions для TraceId/SpanId, domain-specific properties в `ConfEndpointHandler` (`Path`/`Resolved`/`Status`/`ETag`/`Key`/`Scope`/`Incs`/`Depth`/`ElapsedMs`). Сам Seq-transport уже wired (commit `cdf9f4b`) — это следующий слой enrichment'а.
-    - [x] **Deploy-wiring под Caddy-based HTTPS (spec §11):** `UseForwardedHeaders` с `KnownProxies = { IPAddress.Loopback }` + `KnownIPNetworks.Clear()`. В Testing-env skip'ается `UseHttpsRedirection` (Kestrel на plain http).
-    - [x] **Bootstrap doc (`doc/deploy.md`):** пошаговый guide — DNS, Caddy fragment, SSH secrets, admin-password hash, deploy tag, verify /health + /version + /ready, API-ключи через env vars, rollback через re-tag, deployment asymmetries с yobalog.
-    - [x] **`/ready` endpoint:** DB-connect check через `IConfigStore.ListNodePaths()`. 503 Service Unavailable если store throws. 3 integration-теста: healthy store, throwing store, anonymous access.
-    - [x] **HOCON-Prism component:** `ts/prism-hocon.ts` порт из sabieber/vscode-hocon TextMate grammar (строки, substitutions `${var}`, keywords include/url/file/classpath, booleans, numbers + duration/bytesize suffix, comments, punctuation). Импортится из `admin.ts`, применяется к `<code class="language-hocon">` блокам на Node/Import pages. Re-highlight при htmx-swap — Phase B.
+- [x] **AES-256-GCM encryption** — `AesGcmSecretEncryptor` + IV/AuthTag/KeyVersion fields (переместятся в Bindings rows с `Kind=Secret`).
+- [x] **Admin cookie-auth** — `AdminPasswordHasher` (PBKDF2-SHA256 @100k), Login page, Razor cookie scheme.
+- [x] **AuditLog semantics** — append-only, rollback через новый Upsert с `actor=restore:<id>`. Schema меняется (`TagSetJson` вместо `Path`), invariant тот же.
+- [x] **OTLP tracing** wiring + `OpenTelemetry:Enabled` gating + `X-Seq-ApiKey` auth (reuse `YOBALOG_API_KEY`). Span names переопределяются на новые resolve-stages.
+- [x] **Seq.Extensions.Logging** + `doc/logging-policy.md` — policy без изменений.
+- [x] **Caddy deployment + CI** (`doc/deploy.md`, port 8081, GitHub Actions NuGet cache + merged `ci` job + BuildX GHA layer cache).
+- [x] **Tailwind + DaisyUI dark theme** + `data-testid` selector invariant + bun build.
+- [x] **Razor Pages + htmx** — UI framework.
+- [x] **Import converters** — `JsonToHoconConverter` переименовывается в `JsonFlattener`, `YamlToHoconConverter` → `YamlFlattener`, `DotenvToHoconConverter` → `DotenvFlattener`. Output — `IReadOnlyList<(string KeyPath, JsonElement Value)>` вместо HOCON-текста. Regex-based per-leaf classification (v1 Phase B.7) — reused.
+- [x] **`.NET SDK `YobaConf.Client`** — core HTTP polling + ETag infra переиспользуется. API shape переписывается: `AddYobaConf(opts => opts.WithTags(new { env = "prod", project = "yobapub" }))` вместо `opts.WithPath(...)`. Flattening to colon-keys — как есть.
 
-- [~] **Фаза B — редактирование.** CRUD по нодам в UI с текст-редактором (CodeMirror 6 upgrade — deferred follow-up), audit log (immutable history — landed B.1), soft delete (landed B.1), **Optimistic locking** через `ContentHash` column на Nodes/Variables/Secrets (landed B.1). **Unified timeline UI** — `/History` full-page (landed B.6). **Design source** — `doc/ui-reference.md`.
-    - [x] **B.1 Storage foundation** — `AuditLog` table + `IAuditLogStore` + `UpsertOutcome`/`expectedHash` optimistic locking contract на `IConfigStoreAdmin`. 14 new unit tests in `AuditLogTests`.
-    - [x] **B.2 `/Index` indented tree** — hierarchical tree view с actual/virtual/empty dot glyphs + client-side search + `/`-shortcut focus + new-empty-node POST handler. 4 E2E.
-    - [x] **B.3 `/Node` Variables + Secrets CRUD** — two-column inline-edit tables (Save + Delete via `formaction`), secret reveal via `?reveal=key` with 10s auto-hide, resolved JSON redaction for top-level secret keys. 6 E2E.
-    - [x] **B.4 Node edit mode + inline conflict bar** — textarea editor with Save/Cancel, `expectedHash` round-trip, conflict detection re-renders edit mode with in-flight text preserved. 3 E2E. **CodeMirror 6 + HOCON StreamLanguage grammar остаётся follow-up** (texture upgrade; contract already in place).
-    - [ ] **B.5 Three-way conflict resolver modal** — skipped in this sprint. `@codemirror/merge` + per-hunk cherry-pick — сделать вместе с CM6 upgrade (B.4 follow-up).
-    - [x] **B.6 `/History` audit-log page + single-entry rollback** — day-grouped timeline with filters (scope + entity types), rollback dispatches to the right Upsert per entity (Node content / Variable value / Secret bundle) with `actor = "restore:<id>"`. Drawer overlay on `/Node` deferred. 5 E2E.
-    - [x] **B.7 `/Import` classify step** — per-leaf Keep/Variable/Secret classification for flat HOCON, mask-by-default with client-side reveal (10s auto-hide), Save splits into Node RawContent + Variables + Secrets. 4 E2E. **Server-side cache for reveal** (replace client data-value) + nested-HOCON support — documented follow-ups.
-    - [ ] Follow-ups на Phase B+1:
-        - CodeMirror 6 editor replacing textarea (incl. HOCON StreamLanguage + `@codemirror/merge` for 3-way resolver)
-        - History drawer overlay on `/Node` (400px slide-in)
-        - Server-side MemoryCache reveal endpoint for `/Import` (replaces DOM data-value)
-        - Nested-HOCON classification
-        - Divergent-state preview before rollback applies
-        - Master-key rotation warning on old-secret rollback
-- [ ] **Фаза C — секреты.** Variables & Secrets с AES-256, маскирование в UI (`******`), отдельный scope ключей для доступа к секретам. Мастер-ключ — env var, не в БД/конфиге.
-- [x] **Фаза C.5 — OTel self-emission** (yobalog Phase H.2 landed → gate снят). YobaConf эмитит spans своего `ResolvePipeline` + ASP.NET Core root-span (автоматом от `OpenTelemetry.Instrumentation.AspNetCore`) + SQLite read/write методов через OTLP HTTP/Protobuf. Off-by-default через `OpenTelemetry:Enabled` в `appsettings.json`; prod-выкладка включает через env var.
-    - [x] `src/YobaConf.Core/Observability/ActivitySources.cs`: две ActivitySource — `YobaConf.Resolve` (pipeline стадии) + `YobaConf.Storage.Sqlite` (read/write boundaries). const names для `AddSource(...)`.
-    - [x] `AddOpenTelemetry()` wiring в `YobaConfApp.ConfigureServices`: `.WithTracing(t => t.AddSource(Resolve, StorageSqlite).AddAspNetCoreInstrumentation(filter=/health+/ready skip).AddOtlpExporter(HttpProtobuf, X-Seq-ApiKey))`. Gated на `OpenTelemetry:Enabled == true` AND `!IsEnvironment("Testing")` AND непустой `OtlpEndpoint`. Auth reuses `YobaLog:ApiKey` (тот же ключ, тот же workspace).
-    - [x] `ActivitySource.StartActivity()` в `ResolvePipeline.Resolve`: root `yobaconf.resolve` + children `yobaconf.fallthrough-lookup` / `yobaconf.variables-resolve` / `yobaconf.include-preprocess` / `yobaconf.hocon-parse` / `yobaconf.json-serialize` / `yobaconf.etag-compute`. Attributes: `yobaconf.path` на root, `yobaconf.resolved` на fallthrough-lookup, `yobaconf.variables.count` на variables-resolve.
-    - [x] SQLite manual instrumentation в `SqliteConfigStore`: `sqlite.find-node` / `sqlite.list-node-paths` / `sqlite.find-variables` / `sqlite.find-secrets` / `sqlite.upsert-node` / `sqlite.upsert-variable` / `sqlite.upsert-secret` / `sqlite.soft-delete-*`. Attribute `yobaconf.path` на path-specific ops. `OpenTelemetry.Instrumentation.Sqlite` не существует — see yobalog decision-log 903fd4a.
-    - [x] Конфиг: `OpenTelemetry:Enabled` (default `false`), `OpenTelemetry:OtlpEndpoint`, `OpenTelemetry:ServiceName` (default `"yobaconf"`). Prod-инъекция через env vars `OpenTelemetry__Enabled` / `OpenTelemetry__OtlpEndpoint` из GitHub secrets `YOBACONF_OTEL_ENABLED` / `YOBACONF_OTLP_ENDPOINT`; API-key переиспользует `YOBALOG_API_KEY`.
-    - [x] Unit-тесты: `TracingTests` с `ActivityListener` и probe-scoped TraceId-фильтром (для изоляции от параллельных тест-классов, которые тоже вызывают `ResolvePipeline.Resolve`). 5 тестов: emits-all-stages, root-tag-path, fallthrough-tag-resolved, variables-count-tag, children-nest-under-root.
-    - [x] Документация в `doc/deploy.md` Step 7: как включить OTel в prod + как наблюдать spans в yobalog waterfall UI.
-- [~] **Фаза D — клиентские SDK.** .NET — **готов**: `YobaConf.Client` с `AddYobaConf(options => ...)` extension, `IConfigurationProvider` поверх HttpClient + ETag polling, `JsonFlattener` в flat-key form (`db:host`, `features:0`), `Optional`-flag для fail-soft, inject'ируемый `HttpMessageHandler` для тестов (через `WebApplicationFactory.Server.CreateHandler`). 9 unit + 11 E2E тестов (базовый load, nested → colon, substitutions резолвятся до flattening, variable inheritance, auth error, missing node optional/non-optional, fallthrough, arrays → indexed keys, GetSection, typed binding). Python (Pydantic source) + TS/Bun — отложены.
-- [ ] **Фаза E — push для сверхнагрузок.** Экспорт собранного JSON в Redis/Consul/S3.
+## v2 Фазы
 
-## Тестовое покрытие до фазы A
+### Фаза A — Tagged MVP (dog-food ready)
 
-- [x] **Резолвинг (snapshot tests):** `ResolvePipelineTests` покрывает end-to-end fixture → JSON + ETag для простой ноды, fallthrough, variable substitution, variable inheritance, explicit include, ETag determinism across key-order permutations, ETag change on content/variable change, full mix (fallthrough + vars + include), empty-object node, unresolved substitution propagation. 12 тестов. HOCON→JSON сериализатор + HoconVariableRenderer уже закрыты.
-- [x] **HOCON → JSON сериализатор:** `HoconJsonSerializer.SerializeToJson(HoconRoot, pretty)` + `SerializeToNode(HoconRoot) → JsonNode?`. Canonical output: ordinal-sorted object keys (ETag determinism), arrays keep HOCON order. 16 тестов: scalars (string/int/double/bool), nested objects, dotted-path keys, arrays, key-sort determinism, substitutions resolved, null literal vs quoted "null", empty containers, nested arrays-of-objects, escape sequences, pretty printing, negatives + large integers, `SerializeToNode` manipulable tree, empty-object literal. Документировали Hocon 2.0.4 quirk: unquoted doubles репортят `Type=String` — `ConvertString` re-типизирует через Raw.
-- [ ] **Import converters** (pre-Phase A prerequisite): `JsonToHocon` / `YamlToHocon` / `DotenvToHocon`. Блокирует paste-import UI. Тесты на типовые паттерны каждого формата + edge cases (escaping, quoted strings, comments).
-- [x] **Fallthrough:** `FallthroughTests.cs` — exact hit, missing leaf → ancestor, missing subtree → root-level, no ancestor → null, ancestor chain root-to-leaf ordering, skipped middle nodes. 6 тестов.
-- [x] **`NodePath` валидация slug:** `NodePathTests.cs` — валидные сегменты, round-trip между `.`- и `/`-нотацией, отклонение прописных букв / underscore / ведущий-тире / коротких сегментов / пробелов / точек внутри сегмента, `$`-системный префикс, `Parent` walk, `Root == default`, value-equality. 15 тестов.
-- [x] **HOCON merge smoke** (Phase A.1 follow-up): `HoconMergeTests.cs` — `.WithFallback` скаляры, deep objects, substitution через concat-before-parse, optional `${?var}`, required substitution бросает at parse-time. 5 тестов.
-- [x] **Циклические инклуды между нодами:** `A → B → A` и `A → B → C → A` ловятся через `CyclicIncludeException` с полной цепочкой путей. Реализация — `IncludePreprocessor` с inflight `HashSet<NodePath>` + `Stack<NodePath>` для reporting. 2 теста.
-- [x] **Include scope violation:** descendant / sibling-subtree / self-include → `IncludeScopeViolationException` с понятным сообщением (named parties). 3 теста (по одному на каждый вариант).
-- [x] **Include target not found:** отсутствующая нода → `IncludeTargetNotFoundException` с target-полем. 2 теста (root + included-from-existing).
-- [x] **Unsupported HOCON forms:** `include file(...)` / `classpath(...)` / `url(...)` / `required(...)` / relative `"../"` → `UnsupportedIncludeSyntaxException`. 5 тестов (Theory + relative).
-- [x] **Positive include cases:** ancestor, sibling-same-dir, nested (3 уровня), dup-via-two-paths, trailing-comment, case-sensitive `include` keyword. 6 тестов.
-- [ ] **API-ключ scope (property test):** ключ на `yobaproj.yobaapp` видит `yobaproj.yobaapp.dev`, не видит `yobaproj.otherapp`; граничные случаи (exact match на `RootPath`, префикс-collision типа `yobaproj.yobaapplication` не должен проходить).
-- [ ] **ETag:** одинаковый вход → одинаковый хеш; `304 Not Modified` корректно; изменение любого включённого фрагмента инвалидирует.
-- [ ] **HOCON include-resolution:** инклуд несуществующего фрагмента — ошибка; защита от бесконечной глубины (DoS).
+Цель — реализовать subset-merge resolve + минимальный admin-UI так, чтобы можно было начать переключать консюмеров. Собирается из v1 compile-state (удаление HOCON/path-tree + новая имплементация в одном рабочем checkpoint'е; в git-history — отдельные commits).
+
+- [ ] **A.0 Purge v1.** Удалить `src/YobaConf.Core/Hocon/`, `ResolvePipeline`/`IncludePreprocessor`/`HoconVariableRenderer`, `NodePath`, `HoconNode`, `Nodes`/`Variables`/`Secrets` entities, `/Index` (tree), `/Node` pages, `GET /v1/conf/{**urlPath}` endpoint, `ts/prism-hocon.ts`, `Hocon` + `Hocon.Configuration` packages из `Directory.Packages.props`. Все ссылающиеся тесты — удалить. Build должен зеленеть на пустом core (только `Crypto/`, `AdminPasswordHasher`, `ActivitySources`, `Observability/`).
+- [ ] **A.1 Bindings storage.** `Binding` entity + `TagSet` value-object (canonical JSON serialization — ordinal key sort, no whitespace). `SqliteBindingStore` на linq2db: `Bindings` + `TagVocabulary` + `ApiKeys` + `AuditLog` tables (CREATE IF NOT EXISTS idempotent schema). Upsert/SoftDelete на `IBindingStoreAdmin`. Index: `UNIQUE (TagSetJson, KeyPath) WHERE IsDeleted=0`. WAL mode. Unit + integration тесты (bindings roundtrip, canonical-JSON byte-identical invariant, UNIQUE enforcement, soft-delete / resurrect).
+- [ ] **A.2 Resolve pipeline.** `ResolvePipeline.Resolve(IReadOnlyDictionary<string,string> tagVector, IBindingStore) → ResolveResult { Json, ETag } | ConflictResult`. Stages: candidate-lookup (SQLite `json_each`-based subset predicate) → group-by-KeyPath → conflict-check (tied-at-max-specificity → 409) → decrypt-secrets (`ISecretEncryptor`) → expand-dotted → canonical JSON (`System.Text.Json`, ordinal-sorted) → sha256-16-hex ETag. 8 snapshot-тестов: happy path (0-tag root binding), single-dimension override, multi-dimension precedence, tied-identical-values (deterministic pick), tied-different-values → 409, secret decrypted on resolve, dotted-key expansion (`db.host` + `db.port` → `{"db":{...}}`), ETag determinism across binding-insert-order permutations.
+- [ ] **A.3 ApiKeys.** `ApiKey` entity с `RequiredTagsJson` + `AllowedKeyPrefixes`. `X-YobaConf-ApiKey` header + `?apiKey=` query. Validation: `request.TagVector ⊇ apiKey.RequiredTags` (exact subset) → иначе 403. Filter response by `AllowedKeyPrefixes`. Constant-time token compare (`CryptographicOperations.FixedTimeEquals`). 6 integration-тестов (missing key / wrong hash → 401; subset mismatch → 403; prefix-filter subset; happy path).
+- [ ] **A.4 `GET /v1/conf` endpoint.** Query-params → tag-vector. Slug validation на каждом `key=value`. Conflict → 409 JSON с `tiedBindings` array + hint. ETag + If-None-Match → 304. Integration-тесты через `WebApplicationFactory` (happy 200, 304 на match, 409 на incomparable, 403 apikey mismatch, 400 invalid slug).
+- [ ] **A.5 Dashboard.** `/Bindings` — facet-filter bar (dropdown per known tag-key из TagVocabulary или free-form) + table (TagSet chips / Key / Value / Updated). Filter sugar: query-params → WHERE matching. Row click → detail view. Secret value masked `••••••` до reveal. Inline-add-row внизу таблицы. 4 E2E (filter by tag, search by key, reveal secret, add binding).
+- [ ] **A.6 Binding editor.** Create / Edit panel: tag-picker (known keys из vocabulary + add-new), key input, value textarea / password input, Kind radio. Live preview: "Resolve with these tags would include this binding".  Inline conflict warning ("Incomparable with binding #X on key=Y; add overlay to disambiguate"). 3 E2E (create Plain, create Secret, edit with conflict detection).
+- [ ] **A.7 `/Tags` page.** TagVocabulary CRUD. Free-form tags visible в warning-banner ("3 bindings use unknown tag 'contry' — typo?"). 2 E2E.
+- [ ] **A.8 `/ApiKeys` page.** List + Create + Soft-delete. Generated token shown once on Create. 2 E2E.
+- [ ] **A.9 OTel rewire.** Root span `yobaconf.resolve` + children `candidate-lookup` / `group-by-key` / `conflict-check` / `decrypt-secrets` / `expand-dotted` / `canonical-json` / `etag-compute`. SQLite spans: `sqlite.candidate-lookup` / `sqlite.upsert-binding` / etc. Attributes `yobaconf.tag-count` (specificity), `yobaconf.matched-count` (candidate count). Tests через `ActivityListener` с probe-scoped TraceId filter (pattern из v1 Phase C.5).
+
+### Фаза B — Import + History + Rollback
+
+Перевод v1 Phase B.6 + B.7 на tagged-storage. Sooner the better — paste-import сильно ускоряет onboarding существующих конфигов.
+
+- [ ] **B.1 `/Import` paste flow.** Step 1: source textarea + format dropdown (JSON / YAML / `.env`) + target tag-picker. Step 2: classify table (per-leaf row: key / value / Plain|Secret radio). Step 3: Save → N bindings с тем же target tag-set. Preview по аналогии с v1. 4 E2E (json happy, yaml nested, dotenv, classify + save).
+- [ ] **B.2 `/History` page.** Day-grouped timeline of AuditLog, filters (by tag-value, entity-type, actor, key-path substring). Per-entry Rollback → Upsert из `OldValue` с `actor=restore:<id>`. 3 E2E (list filter, rollback Plain, rollback Secret).
+
+### Фаза C — Secrets hardening
+
+`Kind=Secret` уже landed в Phase A как часть Bindings schema. Здесь — polish + rotation.
+
+- [ ] **C.1 Secret reveal с single-read.** Reveal endpoint (не URL-param; POST с server-cached 10s window). Replace v1's data-attribute client-side hack. 2 E2E.
+- [ ] **C.2 Master-key rotation.** CLI `--rotate-master-key <old> <new>` перечитывает все `Kind=Secret` bindings, decrypt old → encrypt new → KeyVersion bump. Audit entry на каждую row. 3 unit + 1 integration test.
+- [ ] **C.3 Secret scope ACL** (если будет востребовано). Сейчас — API-key с путём доступа к bindings автоматически имеет доступ к decrypted secrets. Отдельная permission `CanReadSecrets` может быть добавлена если реальный use-case появится.
+
+### Фаза D — Consumer SDKs
+
+- [ ] **D.1 .NET SDK rewrite.** `AddYobaConf(opts => opts.Endpoint("...").WithTags(...).ApiKey("..."))` extension. `IConfigurationProvider` поверх HttpClient с ETag polling. Flattener: `{"db":{"host":"x"}}` → `db:host = x`. Fail-soft `Optional` flag. Existing v1 tests rewritten для tagged-tags вместо path. ~15 тестов.
+- [ ] **D.2 Python SDK (Pydantic source).** async fetcher + Pydantic model validation + background refresh на ETag-change. Pytest coverage. Пакет `yobaconf` на PyPI (или private index).
+- [ ] **D.3 TypeScript SDK (bun target).** Аналог Python'ового — async refresh + typed accessor. Пакет `@yobaconf/client` (или similar).
+
+### Фаза E — Operational polish
+
+- [ ] **E.1 Tag-priority escape hatch** (если конфликты станут частыми). `priority` column на TagVocabulary → tie-breaker при incomparable tie. Scoped за feature-flag, off by default — fail-fast остаётся primary behaviour.
+- [ ] **E.2 Push integrations.** Экспорт resolved JSON в Redis/Consul/S3 для sverxy'nagruzok use-cases.
+- [ ] **E.3 Read-replicas.** Litestream → read-only SQLite replicas если pet-scale прорастёт.
+- [ ] **E.4 Perf benchmark.** Soft goal "p99 < 50ms resolve на 200 bindings × 5-dim tag-vector" — проверяется когда появится нагрузочный тест.
+
+## Тестовое покрытие — приоритеты
+
+- **Canonical JSON byte-identity.** Property test: `TagSet.Canonical({a:1,b:2}) == TagSet.Canonical({b:2,a:1})` → байт-идентичны. Blocking для UNIQUE index корректности.
+- **Subset match SQL.** `json_each`-based predicate в `IBindingStore.FindMatching(tagVector)`. Case coverage: empty tag-vector matches только `{}`-tagged bindings; multi-tag vector matches strict subsets; tag-value mismatch excludes. ≥6 тестов.
+- **Conflict lattice invariants** (property test): если два bindings incomparable и оба match'ят tag-vector с одинаковыми values → resolve picks deterministic (lowest Id), с разными → 409. Если хотя бы один subset другого → specificity wins.
+- **ETag determinism.** Re-serialize → same hash. Shuffle binding-insert-order → same hash. Change any binding value → new hash.
+- **Secrets at rest encrypted.** Utility-тест: записать Secret, grep `.db` на plaintext → 0 hits.
+- **API-key subset semantics.** `RequiredTags={env:prod, project:yobapub}` + request `?env=prod&project=yobapub&region=eu` → 200. Request `?env=prod` → 403 (proper subset, но request не subset'ит required). Request `?env=staging&project=yobapub` → 403 (value mismatch).
 
 ## Инварианты, которые легко нарушить (читать перед кодом)
 
-- **Нет self-config.** Сам YobaConf конфигурируется только из `appsettings.json`. Попытка положить что-либо в YobaConf-ноду `$system/yobaconf` и читать оттуда при старте — бутстрап-цикл. Мастер-ключ AES — env var, не файл.
-- **Нет YobaLog → YobaConf.** YobaConf → YobaLog (CLEF) — единственное направление. В YobaLog `spec.md` §1 зафиксировано, что его конфиг только из `appsettings.json` — цикл невозможен по конструкции.
-- **Secrets в AuditLog — всегда зашифрованные.** Spec §7. Utility-тест: смотрим в `.db`-файл после записи секрета, убеждаемся, что plaintext там не лежит.
-- **Slug-regex для имён нод.** `^[a-z0-9][a-z0-9-]{1,39}$`, точка запрещена (разделитель пути), `$`-префикс зарезервирован для системных нод. Синхронно с workspace ID в YobaLog.
-- **API-ключ scope — проверка по сегментам, не по подстроке.** Ключ на `yobaproj.yobaapp` не должен пускать на `yobaproj.yobaapplication`. Сравнение — по элементам пути после split'а.
-- **Детерминизм pipeline.** Snapshot-инварианты — главная защита от регрессий. Любое изменение форматирования итогового JSON, порядка мержа или resolve — меняет snapshot, видно в diff.
-- **Локализация с первого дня.** Все user-facing строки через `IStringLocalizer`. Пока i18n-каркаса нет — все строки **литерально на английском ASCII**. CI будет иметь non-ASCII check на `ts/` и `Pages/` (как в yobalog).
-- **UI-селекторы: `data-testid` обязателен.** Как в yobalog (`tests/YobaConf.E2ETests/` появится в Phase B): `page.GetByTestId(...)`, никаких `GetByText`, `GetByRole(Name=...)`, CSS-класс-селекторов на chrome. Display-строки — цели локализации, сломаются на первом же переводе.
-- **Frontend build — Release-only.** Debug не зовёт `bun` из MSBuild; для dev — параллельные watcher'ы (`dotnet watch` + `bun run dev`).
-- **Никакого `IsEnvironment("Testing")` в production-коде.** Ни прямо (`builder.Environment.IsEnvironment("Testing")`), ни косвенно (`EnvironmentName.Equals("Testing", ...)`). Any gate that needs "off in tests" → config-driven (пустая строка в appsettings = off, env var в Dockerfile/CI = on). Причина: magic-string coupling между prod-кодом и test-setup'ом — тест снимает "Testing", prod-код делает невидимый switch. Config-driven gate транспарентен в любом env. Применяется к ISecretEncryptor (gate = non-empty `YOBACONF_MASTER_KEY`), DataProtection (gate = non-empty `DataProtection:KeysDirectory`), OpenTelemetry (gate = `OpenTelemetry:Enabled == true` + non-empty endpoint). `IsDevelopment()` допустим — это built-in ASP.NET pattern из template'а (ExceptionHandler/HSTS off in dev), не coupling с тестами.
-- **Cake publish зависит от всех test-таргетов явно.** `DockerPush` — единственная точка публикации Docker-образа — перечисляет `IsDependentOn` каждого test-таргета, даже если он уже в chain транзитивно (`DockerSmoke → Docker → Test`). Правило: когда добавляется новый test-таргет (perf, etc.), обязательно приходит новый `.IsDependentOn(...)` на `DockerPush`. Текущее: `.IsDependentOn("Test").IsDependentOn("E2ETest").IsDependentOn("DockerSmoke")` — синхронно с yobalog. Мотивация: явная зависимость страхует от рефакторинга chain'а, когда кто-то разорвёт транзитивную цепочку и не заметит, что Publish теперь пропускает суиту.
-- **E2E-тесты через Playwright + Kestrel** в `tests/YobaConf.E2ETests/`. Запускаются через `./build.sh --target=E2ETest` (авто-install chromium); в CI — через PR-only job `e2e` с кешем `~/.cache/ms-playwright` по hash'у `Directory.Packages.props`, и через `publish` job (DockerPush chain тоже гоняет E2ETest; тот же кеш). Fixture — shared Kestrel + shared browser (single `[CollectionDefinition]`), admin login + storage-state reuse. External CDN (`unpkg.com/{htmx,prismjs}`) стабается в Playwright-route'е пустым 200 — scripts не нужны никаким из текущих тестов, и headless Chromium иначе стоит 15-30с на CDN-fetch. UI-селекторы — только `data-testid` (spec-инвариант). Трейсы на failure — `actions/upload-artifact@v4` с `if: failure()`, в `tests/YobaConf.E2ETests/bin/**/artifacts/*.zip`.
+- **Нет self-config.** YobaConf конфигурируется только из `appsettings.json` + env vars. Ни одного binding'а в собственной БД, читаемого на startup'е. Мастер-ключ AES — env var `YOBACONF_MASTER_KEY`, не binding.
+- **Нет YobaLog → YobaConf.** Единственное направление — YobaConf эмитит логи/трейсы в YobaLog (bootstrap cycle prevention).
+- **Secrets в AuditLog — всегда зашифрованные.** Plaintext нигде не лежит в persistent storage. Только в resolve response и в transient admin-reveal (memory-cached 10s).
+- **Slug-regex для tag-values и key-path сегментов.** `^[a-z][a-z0-9-]{0,39}$` + optional `$`-prefix для системных. Точка запрещена в сегменте (разделитель dotted-key).
+- **API-ключ subset check — exact match по key+value.** Не by-key-only, не regex. `RequiredTags = {env:prod}` и request `?env=prod-v2` → 403.
+- **Детерминизм resolve.** Incomparable tie + разные values → **409, не silent выбор**. Spec §4 invariant.
+- **TagSet canonical JSON byte-identical.** Ordinal key sort. Любое отступление ломает UNIQUE index + ETag determinism.
+- **Локализация с первого дня.** User-facing strings — literal English ASCII, через `IStringLocalizer`. CI non-ASCII check на `Pages/` + `ts/`.
+- **UI-селекторы: `data-testid` обязателен.** Никаких `GetByText` / CSS / role-with-name.
+- **Frontend build — Release-only.** `bun build` только в `$(Configuration) == Release` в MSBuild target. Dev — отдельный `bun run dev` watcher через `./build.sh --target=Dev`.
+- **Никакого `IsEnvironment("Testing")` в production-коде.** Gates — config-driven. См. `decision-log.md` 2026-04-21 pattern.
+- **Cake `DockerPush` depends on all test tasks explicitly.** Новый test-таргет → новый `.IsDependentOn(...)` на `DockerPush`.
 
-## Перф-наблюдения из prod-трейсов (follow-ups, не блокируют)
+## Перф-наблюдения из v1 prod-трейсов (follow-ups)
 
-Зафиксировано из waterfall'ов yobalog после выкатки Phase C.5. Фиксить когда реально заболит или пользователь чувствует.
+Observations из v1 stack; актуальны для v2 после переноса SqliteBindingStore на аналогичный pattern.
 
-- [ ] **Первый `sqlite.find-node` — 133.8ms, а последующие — 8.4ms / 1.1ms. Разница 16×.** Это почти наверняка cold-start: первый `SQLiteTools.CreateDataConnection` прогревает connection pool + применяет `PRAGMA journal_mode=WAL;` (которое наш `Open()` делает на каждом открытии). Что можно дёшево:
-    - Применить WAL один раз при инициализации (в ctor) вместо per-connection — decision зафиксирована в комментариях `Open()` как "safe no-op", но само выполнение PRAGMA не бесплатно.
-    - Либо warmup-запрос при старте (`ListNodePaths` из `/ready` handler'а и так это делает).
+- [ ] **Cold-start первого SQLite-запроса.** v1 показал 133ms vs 1-8ms на subsequent'ах. Причина — `PRAGMA journal_mode=WAL` per-connection в `SqliteConfigStore.Open()`. Warmup в `/ready` handler нивелирует — либо WAL в ctor один раз.
+- [ ] **N+1 в candidate-lookup.** v1 variable-resolve делал 6 запросов (2 per scope level). v2 tagged модели проще — один `WHERE subset` запрос на resolve, но если TagVocabulary query на каждое value-validation в UI начнёт прорастать — batch-fetch.
 
-    Не блокирует, но первый запрос после redeploy'я всегда будет медленным — пользователь чувствует.
+## Расщепление документации
 
-- [ ] **N+1 в `yobaconf.variables-resolve` — 6 SQL запросов** (2 на scope level × 3 уровня: `project-a/env/ns` → `project-a/env` → `project-a` → root — то есть 3-4 уровня, вижу 3 пары). Для глубокого дерева (`company/project/env/region/cluster/service`) станет 12+ запросов. Известный tradeoff scope-resolver'а; лёгкий фикс — один `WHERE ScopePath IN (path1, path2, ..., '')` запрос + группировка в памяти. Отдельный follow-up когда заболит.
-
-## Расщепление документации (когда появится репозиторий)
-
-Готово:
-- [x] `doc/spec.md` — чистая спека (§1-§12 без прогресса и плана).
+- [x] `doc/spec.md` — v2 spec, pure (13 sections + migration + invariants).
 - [x] `doc/plan.md` — этот файл, прогресс + тест-чеклист + инварианты.
 - [x] `doc/decision-log.md` — лог архитектурных решений. Новые записи сверху.
 
 ## Открытые вопросы
 
-- [x] **БД:** SQLite + linq2db (решено 2026-04-21, см. decision-log).
-- [x] **Workspaces поверх path-tree:** нет, paths сами по себе namespace (решено 2026-04-21).
-- [x] **Variables vs Secrets storage:** две отдельные таблицы, не единая с `IsSecret`-флагом (решено 2026-04-21).
-- [x] **Include-семантика:** каждый `.hocon` = отдельная нода; `dir(target) ancestor-or-equal dir(including)`; siblings в той же dir разрешены → возможны циклы → runtime DFS cycle detection; абсолютные пути only; резолвинг — своя preprocess-стадия до HOCON parse. Auto ancestor-merge убран. (Финализировано 2026-04-21 после двух итераций, см. decision-log "Include-семантика финализирована".)
-- [x] **Конкурентные правки в UI:** optimistic locking через `ContentHash` column + three-way merge modal (решено 2026-04-21).
-- [x] **Secret access control:** API-ключ на path даёт доступ к resolved JSON со всеми секретами; отдельной permission нет (решено 2026-04-21, `spec.md` §4).
-- [x] **ETag формула:** `first-16-hex-chars(sha256(rendered-json))`, strong (решено 2026-04-21, `spec.md` §4.6).
-- [x] **API-key token format:** ShortGuid (22 chars, 122 бита) + sha256 hash + 6-char prefix для UI — синхронно с yobalog (решено 2026-04-21, `spec.md` §2).
-- [x] **Восстановление soft-deleted:** через новую запись из `AuditLog` snapshot'а (решено 2026-04-21, `spec.md` §7).
-- [x] **Мастер-ключ AES** — env var `YOBACONF_MASTER_KEY` (`spec.md` §2).
-- [x] **Лог аудита** — immutable, хранится всегда (`spec.md` §7).
-
-Остаются:
-- [x] **Циклические ссылки в HOCON substitutions:** `a = ${b}, b = ${a}` и 3-way цикл `a → b → c → a` — парсер бросает `HoconParserException` at parse-time. 2 теста в `HoconMergeTests.cs`. Защита от DoS по глубине рекурсии — на стороне Hocon 2.0.4, не нашей.
-- [ ] **Клиентские SDK:** обёртки для .NET (`IConfigurationProvider`), Python (Pydantic source), TS/Bun. Phase D.
-- [ ] **Rate limiting:** не реализуем в MVP (удалено из §12 self-observability). Phase E polish.
-- [ ] **Perf target:** soft goal "p99 < 50ms resolve+serialize на 1k нод" — проверяется когда появится нагрузочный тест.
+- [ ] **Priority-flag на tag-key** — нужен ли эскейп-хэтч из fail-fast, или incomparable tie всегда ошибка дизайна (admin добавляет overlay)? Решение — после первых weeks прод-использования.
+- [ ] **Facet-filter UX scale** — как выглядит dashboard с 200+ bindings и 5-dim tag-vocabulary? Virtual scroll? Group-by-tag-value? Решение — при прорастании беспокойства.
+- [ ] **SDK — Python vs TS first?** Зависит от того, что ближайший consumer будет на чём написан. .NET первый в любом случае (`YobaConf.Client` уже существует, переписывается).

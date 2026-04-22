@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-04-21 — Pivot to tagged bindings model (v2); HOCON выпиливается
+
+**Решение:** v1 path-tree + HOCON-as-storage модель отменяется. Новая модель — **tagged bindings**: плоская таблица `(tag-set, key, value)` triple'ов, resolve через subset-merge по tag-vector'у из request'а, fail-fast на incomparable конфликтах. HOCON удаляется **полностью** — и со storage, и с paste-import. Paste-import остаётся в форматах JSON / YAML / `.env` (уже реализованы converter'ы в v1 Phase B.7). Новая спека — `doc/spec.md` v2; старый v1 (path-tree) удалён из spec, остаётся в git history до момента реализации v2.
+
+**Причины:**
+
+1. **Multi-dimensional use-case реален.** Пользователь прошёл несколько what-if сценариев с path-tree: добавление третьего проекта (`yobaspeach`) → OK; runtime-override `batch_size` для копии на локальной машине → awkward (консюмер должен заранее знать про `by-host/<ip>` fallthrough); runtime-override `logLevel` для instance на конкретном IP без redeploy'а → workable только через заранее заложенный fallthrough-shape. Tagged модель решает N-th dimension (host, role, tv-model) симметрично без предварительного планирования структуры дерева.
+2. **Greenfield state.** Нет prod consumer'ов. v1 стек развёрнут (`https://yobaconf.3po.su`), но ни один реальный сервис ещё не подключён. Окно для breaking-change'а закрывается каждый день — сейчас самый дешёвый момент.
+3. **Docker-uniform consumer startup.** Все собственные сервисы пользователя запускаются в Docker; один общий entrypoint-script, который тянет resolved JSON → env vars (максимум aliasing через map-файл). Формат tagged fits: `docker run` передаёт `?env=prod&project=...&host=$(hostname)` параметры, сервер возвращает flat JSON, entrypoint flatten'ит в KEY=value. Path-tree требовал стратегии "какой path запросить с данного Docker'а" — лишний overhead.
+4. **Multi-facet pairing precision.** Yobapub (user's media project) будет пробрасывать конфиги клиентским устройствам — пара `{host, tv-model}` даст уточняющий конфиг без переизобретения структуры. В path-tree это требует фиксированного порядка сегментов; в tagged — N axes симметричны.
+5. **HOCON overkill.** Основная value-prop HOCON'а (substitutions + include + comments) не нужна когда storage — тройки. Substitutions → нет нужды (consumer получает resolved JSON, не template). Include → нет нужды (merge происходит по tag-specificity, не `include` директивам). Comments → не round-trip'ятся всё равно. Парсер — 2 dependency (`Hocon` + `Hocon.Configuration`) + 400+ LOC custom preprocess для circular-include detection + scope validation. Выкидывается полностью. JSON/YAML/.env converter'ы из v1 Phase B.7 живут (сохраняются под flatten-to-leaves работу).
+
+**Что откатывается:**
+- **Spec v1** (path-tree). Удалён из `doc/spec.md`, доступен в git history (`git show HEAD~:doc/spec.md`).
+- **HOCON целиком.** Пакеты `Hocon` 2.0.4 + `Hocon.Configuration` 2.0.4 удаляются из `Directory.Packages.props` и csproj'а при старте Phase A. Исчезают: `HoconJsonSerializer`, `HoconVariableRenderer`, `IncludePreprocessor`, `CyclicIncludeException`, `IncludeScopeViolationException`, `IncludeTargetNotFoundException`, `UnsupportedIncludeSyntaxException`, `HoconNode`, `ts/prism-hocon.ts`, CodeMirror-for-HOCON follow-up из Phase B roadmap.
+- **Path-tree scheme целиком.** `NodePath`, `Nodes` table, `Variables` table, `Secrets` table (функциональность переходит как `Kind=Secret` на Bindings), `IConfigStore`/`IConfigStoreAdmin` replaced на `IBindingStore`/`IBindingStoreAdmin`, `ResolvePipeline` переписывается, `/Node` и `/Index` (tree) UI выкидываются, `GET /v1/conf/{**urlPath}` заменяется на `GET /v1/conf?tag1=v1&tag2=v2&...`.
+- **ApiKey.RootPath** → `ApiKey.RequiredTagsJson` + optional `AllowedKeyPrefixes`.
+- **Phase C.5 OTel spans по path-стадиям** перенастраиваются на tagged-стадии: `yobaconf.resolve` root → children `candidate-lookup` / `group-by-key` / `conflict-check` / `decrypt-secrets` / `expand-dotted` / `canonical-json` / `etag-compute`.
+
+**Что сохраняется as-is:**
+- **AES-256-GCM encryption** через `AesGcmSecretEncryptor` (`src/YobaConf.Core/Crypto/`). Те же IV/AuthTag/KeyVersion поля, но живут в Bindings row с `Kind=Secret`, не в отдельной Secrets таблице.
+- **AdminPasswordHasher** (PBKDF2-SHA256 @100k). Cookie-auth unchanged.
+- **AuditLog** semantics (append-only, rollback через новый Upsert с `actor=restore:<id>`). Schema меняется (TagSetJson вместо Path/ScopePath), но invariant тот же.
+- **OTLP Tracing** экспортер + `OpenTelemetry:Enabled` gating + `X-Seq-ApiKey` auth — wiring целиком.
+- **Seq.Extensions.Logging** + `doc/logging-policy.md` — как есть.
+- **Caddy deployment** (`doc/deploy.md`, port 8081) + GitHub Actions CI (NuGet cache, merged job, BuildX GHA layer cache) + Docker chiseled base — как есть.
+- **Tailwind + DaisyUI dark theme** + `data-testid` selector invariant + bun build.
+- **Razor Pages + htmx** как UI framework (без JSON-admin API в MVP).
+- **JSON/YAML/.env import converters** из v1 Phase B.7. Flatten'ат в dotted-key leaves, каждый leaf становится Binding row.
+- **Классификация при импорте** (per-leaf Plain/Secret radio). "Keep" dimension выпадает — все leaves становятся bindings, нет больше "keep в исходной форме" семантики (исходная HOCON-форма исчезла).
+
+**Consumer-facing API shift:**
+- Client (`YobaConf.Client` .NET SDK, v1 Phase D `done`) переписывается на tagged-first. `AddYobaConf(opts => opts.WithTags(new { env = "prod", project = "yobapub" }))`. GET-ссылка становится `?env=prod&project=yobapub`. ETag / If-None-Match semantics — без изменений. Provider flatten'ит JSON в colon-keys как раньше.
+- Python / TS SDK — не переписываются (ещё не были написаны), сразу tagged.
+
+**What stays unanswered (для Phase D+):**
+- Конфликт-resolution escape hatch. MVP — fail-fast 409. Если конфликты станут частыми в реальной работе → priority-flag на TagVocabulary entry + tie-breaker rule (winning tag wins). Не делаем на MVP — premature. Скрыто за интерфейсом если когда понадобится.
+- Horizontal scaling (read-replicas через Litestream). Не в MVP.
+
+**Миграция:** нет prod data. Dev SQLite (`yobaconf.db`) удаляются на следующем redeploy'я, схема создаётся с нуля на startup'е. v1 path-tree code живёт в git history в качестве ref-имплементации для переиспользуемой infra.
+
+**Cross-refs:**
+- `doc/spec.md` — new v2 (этот commit)
+- `doc/plan.md` — reset на новые phases A-E (этот commit)
+- `doc/decision-log.md` 2026-04-21 "Include-семантика финализирована" + "Secret access control" + "ETag формула" — historical, v1-only
+- yobalog reference — tagged модель не применима (yobalog хранит log events, не конфиг)
+
+---
+
 ## 2026-04-22 — Wireframe extraction: structure yes, visual style no
 
 **Решение:** wireframe-export через `claude.ai/design` (brief — переписка от 2026-04-22) даёт **structure + UX-паттерны** для Phase B UI реализации. Визуальный стиль (custom paper-cream palette + coral accent + Caveat cursive + SVG-wobble filter) **не берём** — нарушает `spec.md` §UI инвариант "Кастомизация запрещена. Конкретная [DaisyUI / Flowbite] библиотека + тёмная тема из коробки (`dark`/`night`/`business`)".
