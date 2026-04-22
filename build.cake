@@ -19,6 +19,8 @@ var webProject = "./src/YobaConf.Web/YobaConf.Web.csproj";
 var unitTestProject = "./tests/YobaConf.Tests/YobaConf.Tests.csproj";
 var e2eTestProject = "./tests/YobaConf.E2ETests/YobaConf.E2ETests.csproj";
 var dockerFile = "./src/YobaConf.Web/Dockerfile";
+var runnerDockerFile = "./src/YobaConf.Runner/Dockerfile";
+var runnerImage = "yobaconf-runner";
 
 GitVersion gitVersion = null;
 var computedDockerTag = "latest";
@@ -153,6 +155,39 @@ Task("Docker")
 	DockerBuildXBuild(buildSettings, ".");
 });
 
+// Runner image — same build-cache story as the web image, but the output image's job is
+// to expose `/yobaconf-run` for downstream COPY --from. No ENTRYPOINT smoke needed; we
+// confirm the image built by doing a `docker run --rm <img> --help` expectation that the
+// binary runs and prints the usage (exit 5 because no child args → InvalidArgs).
+Task("DockerRunner")
+	.IsDependentOn("Test")
+	.Does(() =>
+{
+	var tag = string.IsNullOrWhiteSpace(dockerTagArgument)
+		? gitVersion.FullSemVer.Replace('+', '-')
+		: dockerTagArgument;
+	var imageWithTag = $"{runnerImage}:{tag}";
+
+	Information("Building runner image {0}", imageWithTag);
+
+	var cacheFrom = string.IsNullOrWhiteSpace(dockerCacheFrom) ? Array.Empty<string>() : new[] { dockerCacheFrom };
+	var cacheTo = string.IsNullOrWhiteSpace(dockerCacheTo) ? Array.Empty<string>() : new[] { dockerCacheTo };
+
+	DockerBuildXBuild(new DockerBuildXBuildSettings
+	{
+		File = runnerDockerFile,
+		Tag = new[] { imageWithTag },
+		BuildArg = new[]
+		{
+			$"APP_VERSION={gitVersion.FullSemVer}",
+			$"GIT_SHORT_SHA={gitVersion.ShortSha}",
+		},
+		CacheFrom = cacheFrom,
+		CacheTo = cacheTo,
+		Load = true,
+	}, ".");
+});
+
 // Smoke-test the chiseled runtime: launch container, wait for HTTP 200 on /, tear down.
 // Without this we can't distinguish "built clean" from "runs clean" -- chiseled has no shell
 // for docker-exec debugging, so failures only surface at runtime. 30s total timeout.
@@ -219,6 +254,7 @@ Task("DockerPush")
 	.IsDependentOn("Test")
 	.IsDependentOn("E2ETest")
 	.IsDependentOn("DockerSmoke")
+	.IsDependentOn("DockerRunner")
 	.WithCriteria(() => dockerPushEnabled)
 	.Does(() =>
 {
@@ -226,6 +262,7 @@ Task("DockerPush")
 		throw new CakeException("Docker tag was not computed. Ensure the Docker task ran successfully before pushing.");
 
 	var sourceImage = $"{dockerImage}:{computedDockerTag}";
+	var runnerSourceImage = $"{runnerImage}:{computedDockerTag}";
 
 	var repository = ghcrRepositoryArgument;
 
@@ -247,6 +284,11 @@ Task("DockerPush")
 	}
 
 	var targetImage = $"{repository}:{computedDockerTag}";
+	// Runner image shares the GHCR org but sits under its own image name: …/yobaconf-runner.
+	var runnerRepository = repository.EndsWith("/yobaconf", StringComparison.OrdinalIgnoreCase)
+		? repository.Substring(0, repository.Length - "yobaconf".Length) + "yobaconf-runner"
+		: repository + "-runner";
+	var runnerTargetImage = $"{runnerRepository}:{computedDockerTag}";
 
 	var ghcrUsername = EnvironmentVariable("GHCR_USERNAME");
 	var ghcrToken = EnvironmentVariable("GHCR_TOKEN");
@@ -258,9 +300,13 @@ Task("DockerPush")
 
 	Information("Tagging {0} as {1}", sourceImage, targetImage);
 	DockerTag(sourceImage, targetImage);
-
 	Information("Pushing {0}", targetImage);
 	DockerPush(targetImage);
+
+	Information("Tagging {0} as {1}", runnerSourceImage, runnerTargetImage);
+	DockerTag(runnerSourceImage, runnerTargetImage);
+	Information("Pushing {0}", runnerTargetImage);
+	DockerPush(runnerTargetImage);
 });
 
 // Single-window dev loop: bun watchers (ts + css via concurrently) and dotnet watch stream to
