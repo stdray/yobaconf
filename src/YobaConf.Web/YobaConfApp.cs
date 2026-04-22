@@ -46,6 +46,7 @@ public static class YobaConfApp
 		builder.Services.AddSingleton<SqliteConfigStore>();
 		builder.Services.AddSingleton<IConfigStore>(sp => sp.GetRequiredService<SqliteConfigStore>());
 		builder.Services.AddSingleton<IConfigStoreAdmin>(sp => sp.GetRequiredService<SqliteConfigStore>());
+		builder.Services.AddSingleton<IAuditLogStore>(sp => sp.GetRequiredService<SqliteConfigStore>());
 		builder.Services.AddSingleton<IApiKeyStore, ConfigApiKeyStore>();
 
 		// AES-256-GCM secrets encryption (Phase C). Master key from env var

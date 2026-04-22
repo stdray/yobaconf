@@ -9,7 +9,10 @@
 	<a asp-page="/Index" class="link opacity-70 hover:opacity-100" data-testid="back-to-index">← All configs</a>
 </div>
 
-<h1 class="text-xl font-mono mb-4" data-testid="node-title">@Model.Path.ToDbPath()</h1>
+<div class="flex items-center gap-3 mb-4">
+	<h1 class="text-xl font-mono" data-testid="node-title">@Model.Path.ToDbPath()</h1>
+	<a asp-page="/History" asp-route-path="@urlPath" class="btn btn-xs btn-ghost ml-auto" data-testid="node-history-link">⧗ History</a>
+</div>
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {

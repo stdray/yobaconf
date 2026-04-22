@@ -1,0 +1,125 @@
+@page
+@model YobaConf.Web.Pages.HistoryModel
+@using YobaConf.Core
+@{
+	ViewData["Title"] = "History";
+	var urlPath = Model.Path.Equals(NodePath.Root) ? string.Empty : Model.Path.ToUrlPath();
+	var selfLink = $"/History?path={urlPath}&scope={Model.Scope.ToString().ToLowerInvariant()}&page={Model.PageIndex}";
+}
+
+<div class="mb-4 text-sm flex items-center gap-4">
+	<a asp-page="/Index" class="link opacity-70 hover:opacity-100" data-testid="back-to-index">← All configs</a>
+	@if (!Model.Path.Equals(NodePath.Root))
+	{
+		<a asp-page="/Node" asp-route-path="@urlPath" class="link opacity-70 hover:opacity-100" data-testid="back-to-node">@Model.Path.ToDbPath()</a>
+	}
+</div>
+
+<h1 class="text-xl font-semibold mb-4" data-testid="history-title">
+	History
+	@if (!Model.Path.Equals(NodePath.Root))
+	{
+		<span class="text-sm opacity-70 font-mono ml-2">@Model.Path.ToDbPath()</span>
+	}
+</h1>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="history-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3" data-testid="history-success">@Model.SuccessMessage</div>
+}
+
+<form method="get" class="flex flex-wrap items-center gap-2 mb-4 text-sm" data-testid="history-filters">
+	<input type="hidden" name="path" value="@urlPath" />
+	<label class="flex items-center gap-1">
+		<span class="opacity-70">Scope:</span>
+		<select name="scope" class="select select-bordered select-xs">
+			<option value="exact" selected="@(Model.Scope == YobaConf.Web.Pages.ScopeFilter.Exact)">This node only</option>
+			<option value="desc" selected="@(Model.Scope == YobaConf.Web.Pages.ScopeFilter.Descendants)">Path + descendants</option>
+			<option value="all" selected="@(Model.Scope == YobaConf.Web.Pages.ScopeFilter.All)">All paths</option>
+		</select>
+	</label>
+	<label class="flex items-center gap-1">
+		<span class="opacity-70">Types:</span>
+		<input type="text" name="types" value="@string.Join(",", Model.Types)"
+			class="input input-bordered input-xs font-mono text-xs w-64" data-testid="history-types" />
+	</label>
+	<button type="submit" class="btn btn-xs">Apply</button>
+	<a asp-page="/History" asp-route-path="@urlPath" class="btn btn-xs btn-ghost">Clear</a>
+</form>
+
+@if (Model.Entries.Count == 0)
+{
+	<div class="opacity-60" data-testid="history-empty">No audit entries for this scope/filter.</div>
+}
+else
+{
+	<div class="space-y-3" data-testid="history-timeline">
+		@foreach (var grp in Model.Entries.GroupBy(e => e.At.ToLocalTime().Date).OrderByDescending(g => g.Key))
+		{
+			<div class="flex items-center gap-2 mt-4 text-xs opacity-70">
+				<span class="font-mono">@grp.Key.ToString("yyyy-MM-dd")</span>
+				<div class="flex-1 h-px border-b border-dashed border-base-300"></div>
+			</div>
+
+			@foreach (var e in grp.OrderByDescending(e => e.At).ThenByDescending(e => e.Id))
+			{
+				<div class="pl-4 py-1 border-l border-dashed border-base-300" data-testid="history-entry" data-entry-id="@e.Id">
+					<div class="flex items-center gap-2 text-xs font-mono opacity-80">
+						<span>@e.At.ToLocalTime().ToString("HH:mm:ss")</span>
+						<span class="opacity-60">@e.Actor</span>
+						<span class="badge badge-xs font-mono uppercase">@e.EntityType</span>
+						<a asp-page="/Node" asp-route-path="@e.Path.ToUrlPath()" class="link font-mono opacity-80 hover:opacity-100">@e.Path.ToDbPath()</a>
+						@if (!string.IsNullOrEmpty(e.Key))
+						{
+							<span class="opacity-70">· @e.Key</span>
+						}
+					</div>
+					<div class="text-sm">
+						<strong>@e.Action</strong>
+						@if (e.EntityType == AuditEntityType.Secret)
+						{
+							<span class="opacity-60">(value redacted)</span>
+						}
+						else if (e.Action == AuditAction.Updated || e.Action == AuditAction.Deleted)
+						{
+							<span class="opacity-80">· old-hash <span class="font-mono text-xs">@(e.OldHash?.Substring(0, Math.Min(10, e.OldHash.Length)))</span></span>
+						}
+					</div>
+					<div class="mt-1 flex gap-2">
+						@if (e.Action == AuditAction.Created)
+						{
+							<span class="text-xs opacity-50">← origin · cannot roll back</span>
+						}
+						else
+						{
+							<form method="post" asp-page-handler="Rollback" class="inline">
+								<input type="hidden" name="id" value="@e.Id" />
+								<input type="hidden" name="path" value="@urlPath" />
+								<input type="hidden" name="scope" value="@Model.Scope.ToString().ToLowerInvariant()" />
+								<input type="hidden" name="types" value="@string.Join(",", Model.Types)" />
+								<input type="hidden" name="page" value="@Model.PageIndex" />
+								<button type="submit" class="btn btn-xs btn-ghost" data-testid="history-rollback">Rollback this change</button>
+							</form>
+						}
+					</div>
+				</div>
+			}
+		}
+	</div>
+
+	<div class="flex items-center justify-center gap-3 mt-6 text-sm">
+		@if (Model.PageIndex > 0)
+		{
+			<a href="@($"/History?path={urlPath}&scope={Model.Scope.ToString().ToLowerInvariant()}&page={Model.PageIndex - 1}")" class="btn btn-xs btn-ghost">← newer</a>
+		}
+		<span class="opacity-60 font-mono">page @(Model.PageIndex + 1)</span>
+		@if (Model.Entries.Count >= 50)
+		{
+			<a href="@($"/History?path={urlPath}&scope={Model.Scope.ToString().ToLowerInvariant()}&page={Model.PageIndex + 1}")" class="btn btn-xs btn-ghost">older →</a>
+		}
+	</div>
+}
