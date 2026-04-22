@@ -150,6 +150,7 @@
 - **Общие компоненты (shared library):**
     - Авторизация (Login/Logout).
     - Общий макет (Layout) на готовой component-библиотеке поверх Tailwind (DaisyUI / Flowbite) с тёмной темой из коробки (`dark`/`night`/`business`). Кастомизация запрещена. Конкретная библиотека выбирается в первом frontend-спринте синхронно с YobaLog.
+    - **Screen inventory + UX-паттерны для Phase B реализации** — `doc/ui-reference.md` (экраны, layout'ы, UX-микро-решения из wireframe-export'а; визуальный стиль wireframe'ов отброшен — нарушает "кастомизация запрещена").
     - Уведомления (toasts) через htmx-события.
 - **Редактор конфигов.** Monaco Editor (интеграция через JS-interop).
 

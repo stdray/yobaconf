@@ -4,6 +4,43 @@
 
 ---
 
+## 2026-04-22 — Wireframe extraction: structure yes, visual style no
+
+**Решение:** wireframe-export через `claude.ai/design` (brief — переписка от 2026-04-22) даёт **structure + UX-паттерны** для Phase B UI реализации. Визуальный стиль (custom paper-cream palette + coral accent + Caveat cursive + SVG-wobble filter) **не берём** — нарушает `spec.md` §UI инвариант "Кастомизация запрещена. Конкретная [DaisyUI / Flowbite] библиотека + тёмная тема из коробки (`dark`/`night`/`business`)".
+
+**Что берём** (зафиксировано в `doc/ui-reference.md`):
+- **Screen inventory** — 10 экранов × 14 состояний. Приоритизация A/B/C для Phase B реализации.
+- **Layout-паттерны** — 3-секционный `/Node`, 400px history drawer, filters-sidebar + day-grouped timeline на `/History`, 2-step paste → classify на `/Import`.
+- **UX-микро-решения** (сверх brief'а):
+    - `⇣ inherited` badge для variables, наследованных от ancestor
+    - Revealed-row tinting (secret при reveal — весь row accent-bg как "out of safe state" marker)
+    - `"(secret)"` плейсхолдер в resolved JSON preview (никакого decrypt в preview, отдельный /Reveal endpoint не нужен)
+    - Origin-entry в timeline greyed + explicit "cannot roll back"
+    - Inline-add row под таблицами (dashed-accent border, не modal)
+    - Inline conflict bar в editor'е (alert-warning, не blocking modal)
+    - Pulse-dot на History-кнопке если нода правилась <1 минуты назад
+    - Rate-limit attempt counter на /Login (заранее на будущее)
+    - Master-key rotation warning на rollback (Phase C+1 concern)
+- **Rejected variants** Tree view — Miller columns (Variant B) + grouped cards (Variant C) отброшены: не подходят под yobaconf'овский scale (2-4 depth, до сотен нод). Берём indented tree (Variant A).
+
+**Что отбрасываем:**
+- Custom palette (`#f5f1e8` paper + `oklch(0.65 0.12 30)` coral) — нарушает "кастомизация запрещена". DaisyUI стоковая theme (`business` рекомендована — warm accent под long админ-сессии).
+- Caveat cursive display-font — wireframe-декор, в hi-fi система-sans или DaisyUI default.
+- SVG feTurbulence+feDisplacementMap "rough" filter — чисто sketchy-эстетика wireframe'а.
+- Inline styles — всё через Tailwind utility + DaisyUI component-классы.
+- Pixel-exact spacing (44px nav / 400px drawer) — snap на Tailwind scale (`h-12` = 48px / `w-96` = 384px).
+
+**Исходники wireframe'а** (5 JSX-файлов + HTML/PPTX слайд-deck'и) — локально у владельца в `tmp/yobaconf/`, gitignored. Split-view с JSX при Phase B реализации как структурный reference; перевод в Tailwind-классы на лету.
+
+**Что откатили:** ничего — это первая запись по wireframe-источнику.
+
+**Cross-refs:**
+- `doc/spec.md` §UI — корневой invariant "кастомизация запрещена"
+- `doc/decision-log.md` 2026-04-21 "UI-компонент-библиотека: DaisyUI / Flowbite" — root decision
+- `doc/ui-reference.md` — полное screen-inventory + UX-patterns
+
+---
+
 ## 2026-04-22 — Phase C.5 OTel self-emission: applied, gate removed
 
 **Решение:** yobaconf эмитит spans через OTLP HTTP/Protobuf в yobalog's `/v1/traces`. Предыдущая запись "gated on yobalog Phase F" устарела — yobalog Phase H.2 (OTLP Traces ingestion) landed, endpoint живой, gate снят. Реализация в одном коммите.
