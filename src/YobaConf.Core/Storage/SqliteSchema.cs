@@ -20,7 +20,7 @@ namespace YobaConf.Core.Storage;
 // version=2, the drop branch never re-fires.
 static class SqliteSchema
 {
-	public const int CurrentSchemaVersion = 3;
+	public const int CurrentSchemaVersion = 4;
 
 	public static void EnsureSchema(DataConnection db)
 	{
@@ -44,6 +44,19 @@ static class SqliteSchema
 		}
 
 		// v2 → v3: TagVocabulary table is additive (CREATE IF NOT EXISTS below). No drops.
+		if (current < 3)
+		{
+			// nothing to do — v3 created the table fresh
+		}
+
+		// v3 → v4: TagVocabulary gains a Priority column for the E.5 tie-breaker.
+		// NOT NULL with a default so existing rows get 0 (no priority = no advantage).
+		// Gated on >= 3 so fresh DBs (v0) skip the ALTER — table is created in AllStatements below.
+		if (current >= 3 && current < 4)
+		{
+			db.Execute("ALTER TABLE TagVocabulary ADD COLUMN Priority INTEGER NOT NULL DEFAULT 0;");
+		}
+
 		if (current < CurrentSchemaVersion)
 			db.Execute($"PRAGMA user_version = {CurrentSchemaVersion};");
 
@@ -163,6 +176,7 @@ static class SqliteSchema
 			TagKey      TEXT    NOT NULL,
 			TagValue    TEXT    NULL,
 			Description TEXT    NULL,
+			Priority    INTEGER NOT NULL DEFAULT 0,
 			UpdatedAt   INTEGER NOT NULL,
 			IsDeleted   INTEGER NOT NULL DEFAULT 0
 		);

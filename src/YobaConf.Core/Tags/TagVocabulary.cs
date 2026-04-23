@@ -15,6 +15,7 @@ public sealed record TagVocabularyEntry(
 	string Key,
 	string? Value,
 	string? Description,
+	int Priority,
 	DateTimeOffset UpdatedAt);
 
 public interface ITagVocabularyStore
@@ -29,7 +30,7 @@ public interface ITagVocabularyAdmin
 {
 	// Insert a new entry. Throws InvalidOperationException if (Key, Value) already exists
 	// among live rows — deliberate, stops silent dedupe + preserves the UNIQUE invariant.
-	TagVocabularyEntry Create(string key, string? value, string? description, DateTimeOffset at, string actor = "system");
+	TagVocabularyEntry Create(string key, string? value, string? description, int priority, DateTimeOffset at, string actor = "system");
 
 	// Soft-delete by row id. Returns false if the row is unknown or already deleted.
 	bool SoftDelete(long id, DateTimeOffset at, string actor = "system");

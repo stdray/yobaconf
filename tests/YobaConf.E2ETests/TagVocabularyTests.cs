@@ -58,7 +58,7 @@ public sealed class TagVocabularyTests(WebAppFixture app, ITestOutputHelper outp
 	{
 		// Seed a single declaration so vocabulary becomes non-empty + "env" is the only
 		// known key.
-		app.VocabularyAdmin.Create("env", value: null, description: null, DateTimeOffset.UtcNow);
+		app.VocabularyAdmin.Create("env", value: null, description: null, priority: 0, at: DateTimeOffset.UtcNow);
 
 		var keyPath = "k-" + Guid.NewGuid().ToString("N")[..6];
 		await _page!.GotoAsync("/Bindings/Edit");

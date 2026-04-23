@@ -9,6 +9,7 @@ sealed class TagVocabularyRow
 	[Column, NotNull] public string TagKey { get; set; } = string.Empty;
 	[Column] public string? TagValue { get; set; }
 	[Column] public string? Description { get; set; }
+	[Column] public int Priority { get; set; }
 	[Column] public long UpdatedAt { get; set; }
 	[Column] public int IsDeleted { get; set; }
 }

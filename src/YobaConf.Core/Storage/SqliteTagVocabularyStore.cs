@@ -44,7 +44,7 @@ public sealed class SqliteTagVocabularyStore : ITagVocabularyStore, ITagVocabula
 			.Where(r => r.IsDeleted == 0)
 			.OrderBy(r => r.TagKey).ThenBy(r => r.TagValue)
 			.ToArray();
-		return [.. rows.Select(ToDomain)];
+		return [.. rows.Select(r => ToDomain(r))];
 	}
 
 	public IReadOnlyList<string> DistinctKeys()
@@ -59,7 +59,7 @@ public sealed class SqliteTagVocabularyStore : ITagVocabularyStore, ITagVocabula
 			.ToArray()];
 	}
 
-	public TagVocabularyEntry Create(string key, string? value, string? description, DateTimeOffset at, string actor = "system")
+	public TagVocabularyEntry Create(string key, string? value, string? description, int priority, DateTimeOffset at, string actor = "system")
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(key);
 		ArgumentNullException.ThrowIfNull(actor);
@@ -90,6 +90,7 @@ public sealed class SqliteTagVocabularyStore : ITagVocabularyStore, ITagVocabula
 			TagKey = trimmedKey,
 			TagValue = trimmedValue,
 			Description = trimmedDescription,
+			Priority = priority,
 			UpdatedAt = ts,
 			IsDeleted = 0,
 		}));
@@ -102,11 +103,11 @@ public sealed class SqliteTagVocabularyStore : ITagVocabularyStore, ITagVocabula
 			EntityType = AuditEntityType.TagVocabulary.ToString(),
 			KeyPath = trimmedKey,
 			OldValue = null,
-			NewValue = FormatAudit(trimmedValue, trimmedDescription),
+			NewValue = FormatAudit(trimmedValue, trimmedDescription, priority),
 		});
 		tx.Commit();
 
-		return new TagVocabularyEntry(id, trimmedKey, trimmedValue, trimmedDescription, at);
+		return new TagVocabularyEntry(id, trimmedKey, trimmedValue, trimmedDescription, priority, at);
 	}
 
 	public bool SoftDelete(long id, DateTimeOffset at, string actor = "system")
@@ -132,22 +133,22 @@ public sealed class SqliteTagVocabularyStore : ITagVocabularyStore, ITagVocabula
 			Action = AuditAction.Deleted.ToString(),
 			EntityType = AuditEntityType.TagVocabulary.ToString(),
 			KeyPath = existing.TagKey,
-			OldValue = FormatAudit(existing.TagValue, existing.Description),
+			OldValue = FormatAudit(existing.TagValue, existing.Description, existing.Priority),
 			NewValue = null,
 		});
 		tx.Commit();
 		return true;
 	}
 
-	static string FormatAudit(string? value, string? description) =>
+	static string FormatAudit(string? value, string? description, int priority) =>
 		(value, description) switch
 		{
-			(null, null) => "key-only",
-			(null, _) => $"key-only|{description}",
-			(_, null) => $"value={value}",
-			_ => $"value={value}|{description}",
+			(null, null) => $"key-only|priority={priority}",
+			(null, _) => $"key-only|{description}|priority={priority}",
+			(_, null) => $"value={value}|priority={priority}",
+			_ => $"value={value}|{description}|priority={priority}",
 		};
 
 	static TagVocabularyEntry ToDomain(TagVocabularyRow r) =>
-		new(r.Id, r.TagKey, r.TagValue, r.Description, DateTimeOffset.FromUnixTimeMilliseconds(r.UpdatedAt));
+		new(r.Id, r.TagKey, r.TagValue, r.Description, r.Priority, DateTimeOffset.FromUnixTimeMilliseconds(r.UpdatedAt));
 }
