@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-04-23 — WAL PRAGMA: один раз в schema-init, не в каждом Open()
+
+**Решение:** `PRAGMA journal_mode=WAL` вынесен из per-call `Open()` во всех пяти SQLite-сторах (Binding / ApiKey / User / AuditLog / TagVocabulary) в `SqliteSchema.EnsureSchema()` — один вызов на старте. Store-классы теперь только открывают соединение.
+
+**Причины:**
+
+- **WAL — DB-level, не connection-level.** SQLite хранит `journal_mode` в заголовке файла; после первой установки все последующие подключения наследуют его автоматически. Повторная выдача PRAGMA в каждом `Open()` — лишний roundtrip без эффекта.
+- **v1 prod-трейсинг показал 133ms cold-start** на первом SQLite-запросе против 1–8ms на subsequent'ах (`doc/plan.md` "Перф-наблюдения", v1 `SqliteConfigStore.Open()`). Paттерн семантически неправильный — "настроить journal-mode" это schema-операция, а не per-connection.
+
+**Cross-refs:**
+
+- `doc/plan.md` "Cold-start первого SQLite-запроса" — флаг [x] (resolved)
+- commit `77b45b0` — "perf(storage): move WAL PRAGMA to schema-init, skip per-connection roundtrip"
+
+---
+
 ## 2026-04-22 — Scope trim: multi-admin, defer paste-import + TagVocabulary, add consumer-runtime phase
 
 **Решение:** v2 spec доработан до "MVP минимум для dog-food'а". Четыре правки относительно initial v2 draft (commit `658545b`):
