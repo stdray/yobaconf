@@ -111,7 +111,7 @@ public sealed class SqliteUserStore : IUserStore, IUserAdmin
 		tx.Commit();
 	}
 
-	public bool UpdatePassword(string username, string plaintextPassword, string actor = "system")
+	public bool UpdatePassword(string username, string plaintextPassword, DateTimeOffset at, string actor = "system")
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(username);
 		ArgumentException.ThrowIfNullOrWhiteSpace(plaintextPassword);
@@ -128,7 +128,7 @@ public sealed class SqliteUserStore : IUserStore, IUserAdmin
 
 		SqliteAuditLogStore.Append(db, new AuditLogRow
 		{
-			At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+			At = at.ToUnixTimeMilliseconds(),
 			Actor = actor,
 			Action = AuditAction.Updated.ToString(),
 			EntityType = AuditEntityType.User.ToString(),
@@ -140,7 +140,7 @@ public sealed class SqliteUserStore : IUserStore, IUserAdmin
 		return true;
 	}
 
-	public bool Delete(string username, string actor = "system")
+	public bool Delete(string username, DateTimeOffset at, string actor = "system")
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(username);
 		ArgumentNullException.ThrowIfNull(actor);
@@ -152,7 +152,7 @@ public sealed class SqliteUserStore : IUserStore, IUserAdmin
 
 		SqliteAuditLogStore.Append(db, new AuditLogRow
 		{
-			At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+			At = at.ToUnixTimeMilliseconds(),
 			Actor = actor,
 			Action = AuditAction.Deleted.ToString(),
 			EntityType = AuditEntityType.User.ToString(),

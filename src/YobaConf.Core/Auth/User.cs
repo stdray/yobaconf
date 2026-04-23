@@ -23,7 +23,7 @@ public interface IUserAdmin
 	void Create(string username, string plaintextPassword, DateTimeOffset at, string actor = "system");
 
 	// Returns false when the row isn't found; used by the UI to distinguish 404 from 200.
-	bool UpdatePassword(string username, string plaintextPassword, string actor = "system");
+	bool UpdatePassword(string username, string plaintextPassword, DateTimeOffset at, string actor = "system");
 
-	bool Delete(string username, string actor = "system");
+	bool Delete(string username, DateTimeOffset at, string actor = "system");
 }

@@ -114,8 +114,8 @@ public sealed class AuditLogTests
 		var (_, _, users, audit) = Wire(tmp);
 
 		users.Create("alice", "pw1", DateTimeOffset.UnixEpoch, "root");
-		users.UpdatePassword("alice", "pw2", "alice");
-		users.Delete("alice", "root");
+		users.UpdatePassword("alice", "pw2", DateTimeOffset.UnixEpoch, "alice");
+		users.Delete("alice", DateTimeOffset.UnixEpoch, "root");
 
 		var entries = audit.Query(AuditEntityType.User, null, null, 10);
 		entries.Select(e => e.Action)

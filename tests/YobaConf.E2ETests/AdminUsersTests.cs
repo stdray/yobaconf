@@ -51,7 +51,7 @@ public sealed class AdminUsersTests(WebAppFixture app, ITestOutputHelper output)
 		// Clean up any previous test's leftover users so count == 1.
 		foreach (var u in app.UserStore.ListAll())
 			if (u.Username != solo)
-				app.UserAdmin.Delete(u.Username);
+				app.UserAdmin.Delete(u.Username, DateTimeOffset.UtcNow);
 
 		await _page!.GotoAsync("/admin/users");
 		await Expect(_page.Locator($"[data-user-username='{solo}']")).ToBeVisibleAsync();
@@ -59,7 +59,7 @@ public sealed class AdminUsersTests(WebAppFixture app, ITestOutputHelper output)
 		await Expect(_page.GetByTestId("users-delete")).Not.ToBeVisibleAsync();
 
 		// Clean slate for sibling tests.
-		app.UserAdmin.Delete(solo);
+		app.UserAdmin.Delete(solo, DateTimeOffset.UtcNow);
 	}
 
 	[Fact]
@@ -83,6 +83,6 @@ public sealed class AdminUsersTests(WebAppFixture app, ITestOutputHelper output)
 		app.UserStore.FindByUsername(victim).Should().BeNull();
 
 		// Clean slate.
-		app.UserAdmin.Delete(keeper);
+		app.UserAdmin.Delete(keeper, DateTimeOffset.UtcNow);
 	}
 }

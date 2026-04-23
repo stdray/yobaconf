@@ -64,7 +64,7 @@ public sealed class UsersModel : PageModel
 			return Page();
 		}
 
-		if (_admin.Delete(username, User.Identity?.Name ?? "system"))
+		if (_admin.Delete(username, _clock.GetUtcNow(), User.Identity?.Name ?? "system"))
 			SuccessMessage = $"Deleted user '{username}'.";
 		else
 			ErrorMessage = $"User '{username}' not found.";
