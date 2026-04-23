@@ -112,21 +112,6 @@ Task("E2ETest")
 	});
 });
 
-Task("Benchmarks")
-	.Does(() =>
-{
-	DotNetBuild("benchmarks/YobaConf.Benchmarks/YobaConf.Benchmarks.csproj", new DotNetBuildSettings
-	{
-		Configuration = "Release",
-	});
-
-	var dllPath = MakeAbsolute(FilePath.FromString("benchmarks/YobaConf.Benchmarks/bin/Release/net10.0/YobaConf.Benchmarks.dll"));
-	StartProcess("dotnet", new ProcessSettings
-	{
-		Arguments = dllPath.FullPath
-	});
-});
-
 Task("Docker")
 	.IsDependentOn("Test")
 	.Does(() =>
