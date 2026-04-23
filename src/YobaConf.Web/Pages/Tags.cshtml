@@ -1,0 +1,103 @@
+@page "/Tags"
+@model YobaConf.Web.Pages.TagsModel
+@{
+	ViewData["Title"] = "Tags";
+}
+
+<div class="mb-4 text-sm">
+	<a href="/" class="link opacity-70 hover:opacity-100" data-testid="back-to-index">← Home</a>
+</div>
+
+<h1 class="text-xl font-semibold mb-2" data-testid="tags-title">Tag vocabulary</h1>
+<p class="text-xs opacity-60 mb-4">
+	Declares known tag keys + optional allowed values. Used for warnings in the Bindings
+	editor. Empty vocabulary = free-form (no warnings). Leave value blank to declare
+	a key with any allowed value.
+</p>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="tags-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3" data-testid="tags-success">@Model.SuccessMessage</div>
+}
+
+<section class="mb-6">
+	<h2 class="text-sm uppercase opacity-70 mb-2">Declare tag</h2>
+	<form method="post" asp-page-handler="Create" autocomplete="off" class="grid grid-cols-1 gap-3 max-w-xl" data-testid="tags-create-form">
+		<label class="form-control">
+			<span class="label-text">Key</span>
+			<input type="text" name="key" required
+				placeholder="env"
+				class="input input-bordered input-sm font-mono text-xs"
+				data-testid="tags-create-key" />
+		</label>
+		<label class="form-control">
+			<span class="label-text">Value (optional — leave blank for key-only declaration)</span>
+			<input type="text" name="value"
+				placeholder="prod"
+				class="input input-bordered input-sm font-mono text-xs"
+				data-testid="tags-create-value" />
+		</label>
+		<label class="form-control">
+			<span class="label-text">Description (optional)</span>
+			<input type="text" name="description"
+				class="input input-bordered input-sm"
+				data-testid="tags-create-description" />
+		</label>
+		<div>
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="tags-create-submit">Declare</button>
+		</div>
+	</form>
+</section>
+
+<section>
+	<h2 class="text-sm uppercase opacity-70 mb-2">Vocabulary (@Model.Groups.Sum(g => g.Count()) entries across @Model.Groups.Count keys)</h2>
+	@if (Model.Groups.Count == 0)
+	{
+		<div class="text-xs opacity-60 italic" data-testid="tags-empty">
+			No tag declarations yet — bindings editor won't warn on unknown keys until you add the first one.
+		</div>
+	}
+	else
+	{
+		<div class="grid grid-cols-1 gap-4" data-testid="tags-list">
+			@foreach (var g in Model.Groups)
+			{
+				<div class="border border-base-300 rounded p-3" data-testid="tags-group" data-tag-key="@g.Key">
+					<div class="font-mono text-sm text-primary mb-2" data-testid="tags-group-key">@g.Key</div>
+					<div class="divide-y divide-base-300">
+						@foreach (var e in g.OrderBy(x => x.Value ?? string.Empty))
+						{
+							<div class="flex items-center gap-3 py-2" data-testid="tags-row" data-tag-id="@e.Id">
+								@if (e.Value is null)
+								{
+									<span class="badge badge-ghost badge-sm" data-testid="tags-row-key-only">key-only (any value)</span>
+								}
+								else
+								{
+									<span class="font-mono text-xs" data-testid="tags-row-value">@e.Value</span>
+								}
+								@if (!string.IsNullOrEmpty(e.Description))
+								{
+									<span class="text-xs opacity-60 flex-1" data-testid="tags-row-description">@e.Description</span>
+								}
+								else
+								{
+									<span class="flex-1"></span>
+								}
+								<form method="post" asp-page-handler="Delete" class="inline"
+									onsubmit="return confirm('Delete @g.Key@(e.Value is null ? string.Empty : "=" + e.Value)?');">
+									<input type="hidden" name="id" value="@e.Id" />
+									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="tags-delete">Delete</button>
+								</form>
+							</div>
+						}
+					</div>
+				</div>
+			}
+		</div>
+	}
+</section>

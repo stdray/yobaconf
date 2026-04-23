@@ -69,6 +69,13 @@ public static class YobaConfApp
 			// invariant: "only storage impl populates").
 			builder.Services.AddSingleton<SqliteAuditLogStore>();
 			builder.Services.AddSingleton<Core.Audit.IAuditLogStore>(sp => sp.GetRequiredService<SqliteAuditLogStore>());
+
+			// Tag vocabulary (E.2) — declarative set of known tag-keys + optional allowed
+			// values. Non-blocking: bindings editor surfaces a warning when used key is
+			// missing; empty vocab = free-form (no warnings).
+			builder.Services.AddSingleton<SqliteTagVocabularyStore>();
+			builder.Services.AddSingleton<Core.Tags.ITagVocabularyStore>(sp => sp.GetRequiredService<SqliteTagVocabularyStore>());
+			builder.Services.AddSingleton<Core.Tags.ITagVocabularyAdmin>(sp => sp.GetRequiredService<SqliteTagVocabularyStore>());
 		}
 
 		// AES-256-GCM secrets encryption — master key from env var YOBACONF_MASTER_KEY

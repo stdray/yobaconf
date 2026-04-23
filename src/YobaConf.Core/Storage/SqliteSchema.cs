@@ -20,26 +20,27 @@ namespace YobaConf.Core.Storage;
 // version=2, the drop branch never re-fires.
 static class SqliteSchema
 {
-	public const int CurrentSchemaVersion = 2;
+	public const int CurrentSchemaVersion = 3;
 
 	public static void EnsureSchema(DataConnection db)
 	{
 		ArgumentNullException.ThrowIfNull(db);
 
 		var current = db.Query<long>("PRAGMA user_version;").First();
-		if (current < CurrentSchemaVersion)
+
+		// v1 → v2: drop path-tree leftovers + incompatible AuditLog layout. Gated on < 2
+		// so v2-or-newer DBs never touch this destructive branch again.
+		if (current < 2)
 		{
-			// v1 path-tree leftovers — present in prod volumes from the pre-pivot deploy,
-			// absent in fresh v2 databases. IF EXISTS makes both cases a no-op-or-drop.
 			db.Execute("DROP TABLE IF EXISTS Nodes;");
 			db.Execute("DROP TABLE IF EXISTS Variables;");
 			db.Execute("DROP TABLE IF EXISTS Secrets;");
-			// v1 AuditLog can't ALTER into v2 (wrong columns) — drop wholesale. On a fresh
-			// DB this is a no-op; on a v1 DB this loses the path-tree audit history (which
-			// references path-tree entities we no longer have any way to render).
 			db.Execute("DROP TABLE IF EXISTS AuditLog;");
-			db.Execute($"PRAGMA user_version = {CurrentSchemaVersion};");
 		}
+
+		// v2 → v3: TagVocabulary table is additive (CREATE IF NOT EXISTS below). No drops.
+		if (current < CurrentSchemaVersion)
+			db.Execute($"PRAGMA user_version = {CurrentSchemaVersion};");
 
 		foreach (var stmt in AllStatements)
 			db.Execute(stmt);
@@ -145,6 +146,31 @@ static class SqliteSchema
 		    ON AuditLog(TagSetJson, At DESC);
 		""";
 
+	// TagVocabulary — declares known tag keys + optional allowed values. A row with
+	// TagValue=NULL means "this key is known; any value is allowed". Rows with
+	// TagValue=<non-null> declare specific allowed values. Empty table = free-form (no
+	// warnings). Bindings editor cross-references distinct keys for the unknown-key
+	// warning (non-blocking — spec 15.2 defers hard validation until typos become a
+	// real pain-point).
+	public const string CreateTagVocabularyTable = """
+		CREATE TABLE IF NOT EXISTS TagVocabulary (
+			Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			TagKey      TEXT    NOT NULL,
+			TagValue    TEXT    NULL,
+			Description TEXT    NULL,
+			UpdatedAt   INTEGER NOT NULL,
+			IsDeleted   INTEGER NOT NULL DEFAULT 0
+		);
+		""";
+
+	// Unique on (Key, Value) among live rows. NULL-value rows are distinct per SQLite's
+	// NULL-never-equal semantics — you can have (env, null) + (env, prod) simultaneously,
+	// which matches the "key-declared plus specific allowed values" pattern.
+	public const string CreateTagVocabularyKeyValueLiveIndex = """
+		CREATE UNIQUE INDEX IF NOT EXISTS ux_tagvocab_key_value_live
+		    ON TagVocabulary(TagKey, TagValue) WHERE IsDeleted = 0;
+		""";
+
 	public static readonly IReadOnlyList<string> AllStatements =
 	[
 		CreateBindingsTable,
@@ -156,5 +182,7 @@ static class SqliteSchema
 		CreateAuditLogTable,
 		CreateAuditLogAtIndex,
 		CreateAuditLogTagSetAtIndex,
+		CreateTagVocabularyTable,
+		CreateTagVocabularyKeyValueLiveIndex,
 	];
 }

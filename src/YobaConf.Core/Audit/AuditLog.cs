@@ -37,6 +37,7 @@ public enum AuditEntityType
 	Binding = 0,
 	ApiKey,
 	User,
+	TagVocabulary,
 }
 
 public interface IAuditLogStore

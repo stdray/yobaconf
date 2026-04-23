@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Security;
+using YobaConf.Core.Tags;
 
 namespace YobaConf.Web.Pages.Bindings;
 
@@ -10,14 +11,21 @@ public sealed class EditModel : PageModel
 	readonly IBindingStore _store;
 	readonly IBindingStoreAdmin _admin;
 	readonly ISecretEncryptor? _encryptor;
+	readonly ITagVocabularyStore? _vocabulary;
 	readonly TimeProvider _clock;
 
-	public EditModel(IBindingStore store, IBindingStoreAdmin admin, TimeProvider clock, ISecretEncryptor? encryptor = null)
+	public EditModel(
+		IBindingStore store,
+		IBindingStoreAdmin admin,
+		TimeProvider clock,
+		ISecretEncryptor? encryptor = null,
+		ITagVocabularyStore? vocabulary = null)
 	{
 		_store = store;
 		_admin = admin;
 		_clock = clock;
 		_encryptor = encryptor;
+		_vocabulary = vocabulary;
 	}
 
 	public long? BindingId { get; private set; }
@@ -28,6 +36,7 @@ public sealed class EditModel : PageModel
 	public BindingKind Kind { get; private set; } = BindingKind.Plain;
 	public string? ErrorMessage { get; set; }
 	public string? ConflictMessage { get; set; }
+	public IReadOnlyList<string> UnknownTagKeys { get; private set; } = [];
 
 	public IActionResult OnGet(long? id)
 	{
@@ -128,18 +137,30 @@ public sealed class EditModel : PageModel
 
 		var outcome = _admin.Upsert(candidate, User.Identity?.Name ?? "system");
 
-		// Post-save conflict detector: if another active binding shares KeyPath at the same
-		// TagCount with an incomparable TagSet, flag it. Resolver would 409 on any request
-		// that matches both.
-		var warning = DetectConflict(outcome.Binding);
-		if (warning is not null)
+		// Post-save advisories — both are non-blocking (save already committed). Stay on
+		// page so the admin sees them before navigating away.
+		ConflictMessage = DetectConflict(outcome.Binding);
+		UnknownTagKeys = DetectUnknownTagKeys(tagSet);
+
+		if (ConflictMessage is not null || UnknownTagKeys.Count > 0)
 		{
-			ConflictMessage = warning;
 			BindingId = outcome.Binding.Id;
 			return Page();
 		}
 
 		return RedirectToPage("/Bindings/Index");
+	}
+
+	IReadOnlyList<string> DetectUnknownTagKeys(TagSet tagSet)
+	{
+		// Empty vocabulary = opt-in / free-form mode. No warnings until the first
+		// declaration lands in /Tags.
+		if (_vocabulary is null) return [];
+		var known = _vocabulary.DistinctKeys();
+		if (known.Count == 0) return [];
+
+		var set = new HashSet<string>(known, StringComparer.Ordinal);
+		return [.. tagSet.Select(kv => kv.Key).Where(k => !set.Contains(k)).Distinct(StringComparer.Ordinal)];
 	}
 
 	string? DetectConflict(Binding saved)

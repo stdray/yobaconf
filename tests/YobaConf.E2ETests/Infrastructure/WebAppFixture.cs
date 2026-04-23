@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using YobaConf.Core.Auth;
 using YobaConf.Core.Bindings;
+using YobaConf.Core.Tags;
 
 namespace YobaConf.E2ETests.Infrastructure;
 
@@ -20,10 +21,13 @@ public sealed class WebAppFixture : IAsyncLifetime
 	public IBrowser Browser => _browser ?? throw new InvalidOperationException("Fixture not initialized");
 	public IServiceProvider Services => _host.Services;
 
+	public IBindingStore BindingStore => Services.GetRequiredService<IBindingStore>();
 	public IBindingStoreAdmin BindingAdmin => Services.GetRequiredService<IBindingStoreAdmin>();
 	public IApiKeyAdmin ApiKeyAdmin => Services.GetRequiredService<IApiKeyAdmin>();
 	public IUserAdmin UserAdmin => Services.GetRequiredService<IUserAdmin>();
 	public IUserStore UserStore => Services.GetRequiredService<IUserStore>();
+	public ITagVocabularyStore VocabularyStore => Services.GetRequiredService<ITagVocabularyStore>();
+	public ITagVocabularyAdmin VocabularyAdmin => Services.GetRequiredService<ITagVocabularyAdmin>();
 
 	string _storageStatePath = "";
 
