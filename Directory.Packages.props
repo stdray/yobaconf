@@ -12,6 +12,7 @@
 		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.6" />
 		<PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.6" />
 		<PackageVersion Include="linq2db.SQLite.MS" Version="5.4.1" />
+		<PackageVersion Include="BenchmarkDotNet" Version="0.15.4" />
 		<PackageVersion Include="YamlDotNet" Version="17.0.1" />
 		<!-- Ships Microsoft.Extensions.Logging events to yobalog via Seq-compat endpoint
 		     (POST {base}/api/events/raw with X-Seq-ApiKey). MEL-native provider from

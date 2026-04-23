@@ -75,7 +75,7 @@ Snapshot — первичный инструмент, property-тесты — д
 - [ ] **E.7 TypeScript SDK.** `@yobaconf/client` для bun/node — async refresh + typed accessor.
 - [ ] **E.8 Push integrations.** Export resolved JSON в Redis / Consul / S3 для sverxy-нагрузки use-cases.
 - [ ] **E.9 Read-replicas.** Litestream → read-only SQLite replicas.
-- [ ] **E.10 Perf BDN.** `benchmarks/YobaConf.Benchmarks/` — resolve pipeline под 200 bindings × 5-dim tag-vector, target p99 < 50ms.
+- [x] **E.10 Perf BDN.** `benchmarks/YobaConf.Benchmarks/` — resolve pipeline под 200 bindings × 5-dim tag-vector, target p99 < 50ms.
 
 ## Тестовое покрытие — приоритеты
 

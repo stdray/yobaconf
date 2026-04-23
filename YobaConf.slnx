@@ -9,4 +9,7 @@
     <Project Path="tests/YobaConf.Tests/YobaConf.Tests.csproj" />
     <Project Path="tests/YobaConf.E2ETests/YobaConf.E2ETests.csproj" />
   </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/YobaConf.Benchmarks/YobaConf.Benchmarks.csproj" />
+  </Folder>
 </Solution>
