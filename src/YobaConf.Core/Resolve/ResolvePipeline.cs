@@ -4,6 +4,7 @@ using System.Text.Json;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Observability;
 using YobaConf.Core.Security;
+using YobaConf.Core.Tags;
 
 namespace YobaConf.Core.Resolve;
 
@@ -28,12 +29,20 @@ public sealed class ResolvePipeline
 {
 	readonly IBindingStore _store;
 	readonly ISecretEncryptor? _encryptor;
+	readonly ITagVocabularyStore? _vocabulary;
+	readonly ResolveOptions _options;
 
-	public ResolvePipeline(IBindingStore store, ISecretEncryptor? encryptor = null)
+	public ResolvePipeline(
+		IBindingStore store,
+		ISecretEncryptor? encryptor = null,
+		ITagVocabularyStore? vocabulary = null,
+		ResolveOptions? options = null)
 	{
 		ArgumentNullException.ThrowIfNull(store);
 		_store = store;
 		_encryptor = encryptor;
+		_vocabulary = vocabulary;
+		_options = options ?? new();
 	}
 
 	public ResolveOutcome Resolve(IReadOnlyDictionary<string, string> tagVector) =>
@@ -63,7 +72,7 @@ public sealed class ResolvePipeline
 		var winners = new List<Binding>(groups.Count);
 		foreach (var group in groups)
 		{
-			var (winner, conflict) = PickWinner(group.Key, group.Value);
+			var (winner, conflict) = PickWinner(group.Key, group.Value, root);
 			if (conflict is not null)
 			{
 				root?.SetTag("yobaconf.conflict.key", conflict.KeyPath);
@@ -126,7 +135,14 @@ public sealed class ResolvePipeline
 	//   * For Secret winners any tie is conservatively treated as conflict — comparing
 	//     ciphertext is meaningless (IV is per-encrypt) and decrypt-to-compare leaks nothing
 	//     useful at this layer. Admin resolves by writing a more-specific overlay.
-	static (Binding? Winner, ResolveConflict? Conflict) PickWinner(string keyPath, List<Binding> group)
+	//
+	// Optional priority tie-breaker (E.5): when UsePriorityTieBreaker is true and the
+	// top-tier is tied, narrow to the binding(s) with the highest max-vocabulary-priority
+	// among their tags. If still tied → 409 falls through.
+	(Binding? Winner, ResolveConflict? Conflict) PickWinner(
+		string keyPath,
+		List<Binding> group,
+		System.Diagnostics.Activity? root)
 	{
 		using var span = ActivitySources.Resolve.StartActivity("conflict-check");
 		span?.SetTag("yobaconf.key-path", keyPath);
@@ -143,6 +159,28 @@ public sealed class ResolvePipeline
 
 		if (topTier.Count == 1)
 			return (topTier[0], null);
+
+		// E.5 priority tie-breaker: narrow topTier by max vocab priority score.
+		if (topTier.Count > 1 && _options.UsePriorityTieBreaker && _vocabulary is not null)
+		{
+			var vocab = _vocabulary.ListActive();
+			var priorityByKey = vocab
+				.GroupBy(v => v.Key, StringComparer.Ordinal)
+				.ToDictionary(g => g.Key, g => g.Max(v => v.Priority), StringComparer.Ordinal);
+
+			int ScoreOf(Binding b)
+			{
+				var max = 0;
+				foreach (var kv in b.TagSet)
+					if (priorityByKey.TryGetValue(kv.Key, out var p) && p > max)
+						max = p;
+				return max;
+			}
+
+			var maxScore = topTier.Max(ScoreOf);
+			topTier = topTier.Where(b => ScoreOf(b) == maxScore).ToList();
+			root?.SetTag("yobaconf.priority-tier-breaker", true);
+		}
 
 		var anySecret = topTier.Any(b => b.Kind == BindingKind.Secret);
 		if (anySecret)

@@ -10,6 +10,7 @@ using OpenTelemetry.Trace;
 using YobaConf.Core;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Observability;
+using YobaConf.Core.Resolve;
 using YobaConf.Core.Security;
 using YobaConf.Core.Storage;
 using YobaConf.Web.Endpoints;
@@ -40,6 +41,9 @@ public static class YobaConfApp
 		});
 
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
+		// Resolve conflict tie-breaker options — default-off (UsePriorityTieBreaker=false).
+		// Set via appsettings.json section ResolveConflicts or env var ResolveConflicts__UsePriorityTieBreaker.
+		builder.Services.Configure<ResolveOptions>(builder.Configuration.GetSection("ResolveConflicts"));
 
 		// SQLite-backed bindings store (A.1). Config-gated so integration tests without
 		// `Storage:DataDirectory` set boot without a store — /ready then returns 200 as

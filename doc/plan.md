@@ -70,7 +70,7 @@ Snapshot — первичный инструмент, property-тесты — д
 - [ ] **E.2 TagVocabulary + `/Tags` page.** `TagVocabulary(TagKey, AllowedValues, IsRequired, Description)` table. CRUD UI на `/Tags`. Warning-banner в `/Bindings` editor если binding использует unknown tag-key. 2 E2E.
 - [ ] **E.3 Secret reveal single-read.** POST-endpoint с server-cached 10s window. Audit entry per reveal. Замена client-side reveal через data-attribute. 2 E2E.
 - [ ] **E.4 Master-key rotation CLI.** `yobaconf --rotate-master-key <old> <new>` — decrypt all `Kind=Secret` bindings с old, encrypt с new, bump `KeyVersion`, audit row per binding. 3 unit + 1 integration.
-- [ ] **E.5 Tag-priority escape hatch.** `priority` column на TagVocabulary → tie-breaker при incomparable tie. Feature-flag off by default — fail-fast остаётся primary.
+- [x] **E.5 Tag-priority escape hatch.** `priority` column на TagVocabulary → tie-breaker при incomparable tie. Feature-flag off by default — fail-fast остаётся primary.
 - [ ] **E.6 Python SDK.** `pip install yobaconf` — async fetcher + Pydantic model validation + background ETag refresh. Pytest coverage.
 - [ ] **E.7 TypeScript SDK.** `@yobaconf/client` для bun/node — async refresh + typed accessor.
 - [ ] **E.8 Push integrations.** Export resolved JSON в Redis / Consul / S3 для sverxy-нагрузки use-cases.

@@ -25,6 +25,8 @@ public static class ConfEndpoint
 		[FromServices] IServiceProvider sp)
 	{
 		var encryptor = sp.GetService<ISecretEncryptor>();
+		var vocabulary = sp.GetService<Core.Tags.ITagVocabularyStore>();
+		var options = sp.GetService<ResolveOptions>();
 		// 1. Extract token: header takes precedence; query-string fallback for clients that
 		//    can't set arbitrary headers (curl -G, browser debugging).
 		var token = ctx.Request.Headers["X-YobaConf-ApiKey"].FirstOrDefault()
@@ -77,7 +79,7 @@ public static class ConfEndpoint
 				statusCode: StatusCodes.Status403Forbidden);
 
 		// 4. Resolve.
-		var pipeline = new ResolvePipeline(bindings, encryptor);
+		var pipeline = new ResolvePipeline(bindings, encryptor, vocabulary, options);
 		var outcome = pipeline.Resolve(tagVector, apiKey.AllowedKeyPrefixes, template);
 
 		// 5. Shape response.
