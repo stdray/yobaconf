@@ -23,7 +23,7 @@ public sealed class TagsModel : PageModel
 
 	public void OnGet() => Load();
 
-	public IActionResult OnPostCreate(string? key, string? value, string? description, int priority = 0)
+	public IActionResult OnPostCreate(string? key, string? value, string? description, int? priority)
 	{
 		if (string.IsNullOrWhiteSpace(key))
 		{
@@ -34,7 +34,8 @@ public sealed class TagsModel : PageModel
 
 		try
 		{
-			var entry = _admin.Create(key, value, description, priority, _clock.GetUtcNow(), User.Identity?.Name ?? "system");
+			var clampedPriority = Math.Max(0, priority ?? 0);
+			var entry = _admin.Create(key, value, description, clampedPriority, _clock.GetUtcNow(), User.Identity?.Name ?? "system");
 			SuccessMessage = entry.Value is null
 				? $"Declared tag key '{entry.Key}'."
 				: $"Declared '{entry.Key}={entry.Value}'.";

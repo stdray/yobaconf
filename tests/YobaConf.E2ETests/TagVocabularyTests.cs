@@ -38,12 +38,14 @@ public sealed class TagVocabularyTests(WebAppFixture app, ITestOutputHelper outp
 		await _page.GetByTestId("tags-create-key").FillAsync(key);
 		await _page.GetByTestId("tags-create-value").FillAsync("prod");
 		await _page.GetByTestId("tags-create-description").FillAsync("deployment env");
+		await _page.GetByTestId("tags-create-priority").FillAsync("5");
 		await _page.GetByTestId("tags-create-submit").ClickAsync();
 
 		await Expect(_page.GetByTestId("tags-success")).ToBeVisibleAsync();
 		var group = _page.Locator($"[data-tag-key='{key}']");
 		await Expect(group).ToBeVisibleAsync();
 		await Expect(group.GetByTestId("tags-row-value")).ToHaveTextAsync("prod");
+		await Expect(group.GetByTestId("tags-row-priority")).ToHaveTextAsync("5");
 
 		// Delete via confirm-dialog accept.
 		_page.Dialog += (_, dlg) => _ = dlg.AcceptAsync();

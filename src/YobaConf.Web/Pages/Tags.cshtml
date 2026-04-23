@@ -47,6 +47,12 @@
 				class="input input-bordered input-sm"
 				data-testid="tags-create-description" />
 		</label>
+		<label class="form-control">
+			<span class="label-text">Priority (optional — tie-break strength, 0 = no advantage)</span>
+			<input type="number" name="priority" min="0" step="1" value="0"
+				class="input input-bordered input-sm font-mono text-xs"
+				data-testid="tags-create-priority" />
+		</label>
 		<div>
 			<button type="submit" class="btn btn-sm btn-primary" data-testid="tags-create-submit">Declare</button>
 		</div>
@@ -80,7 +86,8 @@
 								{
 									<span class="font-mono text-xs" data-testid="tags-row-value">@e.Value</span>
 								}
-								@if (!string.IsNullOrEmpty(e.Description))
+								<span class="badge badge-ghost badge-sm font-mono" data-testid="tags-row-priority">@e.Priority</span>
+							@if (!string.IsNullOrEmpty(e.Description))
 								{
 									<span class="text-xs opacity-60 flex-1" data-testid="tags-row-description">@e.Description</span>
 								}
