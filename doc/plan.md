@@ -46,17 +46,14 @@ Snapshot — первичный инструмент, property-тесты — д
 - [ ] **B.3 `/admin/api-keys` CRUD page.** Create-form (description + required-tags picker + allowed-key-prefixes textarea) → plaintext-token shown **once**, hash stored. List с prefix-display. Soft-delete через confirm. Validation: admin не может создать key с `RequiredTags = {}` без confirm (это superuser-token). 3 E2E.
 - [ ] **B.4 `/Bindings` dashboard.** Facet-filter bar — tag-key dropdown'ы из `SELECT DISTINCT` по actually-used values (без явной vocabulary). Table columns: TagSet chips, Key, Value (secrets маскированы), Updated, Actions. Row click → edit panel. Inline-add-row в конце таблицы. 4 E2E (filter by tag, search by key, reveal secret inline, add new binding).
 - [ ] **B.5 Binding editor.** Create / Edit panel: tag input array (key + value + autocomplete из existing values), key input, value textarea / password input, Kind radio. Live preview: "Resolve for these tags would include this binding". Inline conflict warning ("Incomparable with binding #X on key=Y; add overlay to disambiguate"). 3 E2E (create Plain, create Secret, edit with conflict detection).
-- [ ] **B.6 First deploy checkpoint.** Smoke-test на prod VM через `/v1/conf?...`. Переключить 1-2 реальных consumer'а (запуск через `curl` exported env → shell script-runner) чтобы поймать surprise integration-issue до Phase C runner. Deploy-тег передвигается после этого.
+- [ ] **B.6 First deploy checkpoint.** Smoke-test на prod VM через `/v1/conf?...`. Переключить 1-2 реальных consumer'а (запуск через `curl` exported env → shell script-runner) чтобы поймать surprise integration-issue до Phase C SDK. Deploy-тег передвигается после этого.
 
-### Фаза C — Consumer runtime + .NET SDK
+### Фаза C — Consumer runtime (.NET SDK)
 
-Цель — Docker-friendly consumption: runner + alias templates + .NET SDK для long-running apps.
+Цель — `YobaConf.Client` SDK поверх `IConfigurationProvider` с ETag polling и hot-reload, чтобы `IOptionsSnapshot` / `IOptionsMonitor` перечитывали конфиг без restart'а процесса. Runner-based ingestion (`yobaconf-run` sidecar CLI) отложен — см. "Открытые вопросы" ниже.
 
-- [ ] **C.1 Alias templates + response shapes.** `template` query-param на `/v1/conf`: `flat` (default, current nested JSON), `dotnet` (`db__host=…`), `envvar` (`DB_HOST=…`), `envvar_deep` (`DB__HOST=…`). Server applies transformation **после** expand-dotted stage. Per-binding `Aliases` column (JSON dict `{templateName: aliasName}`) для override — fallback на template-derivation. 6 snapshot-тестов (4 templates × flat + 2 alias-override cases).
-- [ ] **C.2 `yobaconf-run` CLI.** New project `src/YobaConf.Runner/`. Single-file publish (`PublishSingleFile=true` + `PublishTrimmed=true`). CLI flags `--endpoint`, `--api-key`, `--tag k=v` (repeated), `--template`, positional child-args после `--`. HTTP GET к `/v1/conf?...` с proper escaping. Exit codes: 0=child-exit-mirror, 2=409 conflict, 3=403 scope, 4=connection error, 5=invalid args. Signal forwarding: SIGTERM/SIGINT proxy'ится в child; wait child exit; mirror exit-code. 8 tests (happy flow via local test-server, 409 diagnostic, 403, connection timeout, missing api-key, signal-forward, env-var fallback for flags, child stdout/stderr passthrough).
-- [ ] **C.3 `yobaconf-run` Docker image.** Отдельный `Dockerfile.runner` → chiseled image с single runner-binary, publish в `ghcr.io/stdray/yobaconf-runner`. Consumer COPY'ит `yobaconf-run` из runner-image как build-stage. Example Dockerfile snippet в `doc/consumer-integration.md`. Smoke-test: build test-Dockerfile с simple `echo $YOBACONF_TEST` child, assert env made it through.
-- [ ] **C.4 `doc/consumer-integration.md`.** How-to для владельца: env-var для `YOBACONF_API_KEY`, `--tag host=$(hostname)` pattern, health-probe в runner (exit 4 перед exec → container crashloop видно, Caddy / docker healthcheck реагируют). Example compose.yml + Dockerfile.
-- [ ] **C.5 .NET SDK rewrite.** `YobaConf.Client` — `AddYobaConf(opts => opts.Endpoint("...").WithTags(...).ApiKey("..."))` extension. `IConfigurationProvider` поверх HttpClient с ETag polling. Flattener: response → `db:host = x` colon-keys (standard .NET Configuration convention). Fail-soft `Optional` flag. 12 тестов (happy roundtrip, ETag 304, connection retry, bad key → Exception if Required, silent if Optional, tag-var overrides, reload on change).
+- [ ] **C.1 Alias templates + response shapes.** `template` query-param на `/v1/conf`: `flat` (default, current nested JSON), `dotnet` (`db__host=…`), `envvar` (`DB_HOST=…`), `envvar_deep` (`DB__HOST=…`). Server applies transformation **после** expand-dotted stage. Per-binding `Aliases` column (JSON dict `{templateName: aliasName}`) для override — fallback на template-derivation. 6 snapshot-тестов (4 templates × flat + 2 alias-override cases). Остаётся полезным и в SDK-only мире: server-side DRY для будущих multi-lang SDK.
+- [ ] **C.2 .NET SDK.** `YobaConf.Client` — `AddYobaConf(opts => opts.Endpoint("...").WithTags(...).ApiKey("..."))` extension. `IConfigurationProvider` поверх HttpClient с ETag polling. Flattener: response → `db:host = x` colon-keys (standard .NET Configuration convention). Fail-soft `Optional` flag. 12 тестов (happy roundtrip, ETag 304, connection retry, bad key → Exception if Required, silent if Optional, tag-var overrides, reload on change).
 
 ### Фаза D — Audit + History + Rollback
 
@@ -89,7 +86,6 @@ Snapshot — первичный инструмент, property-тесты — д
 - **Secrets at rest encrypted.** Utility-тест: записать Secret, grep `.db` на plaintext → 0 hits.
 - **API-key subset semantics.** `RequiredTags={env:prod, project:yobapub}` + request `?env=prod&project=yobapub&region=eu` → 200. Request `?env=prod` → 403 (proper subset, но request не subset'ит required). Request `?env=staging&project=yobapub` → 403 (value mismatch).
 - **Alias template roundtrip (Phase C).** Input `{db.host: x, db.port: 5432}` × template → expected output mapping, 4 templates × snapshot.
-- **Runner signal forwarding (Phase C.2).** Test-process catches SIGTERM from runner, exits gracefully; runner mirrors exit-code.
 
 ## Инварианты, которые легко нарушить (читать перед кодом)
 
@@ -101,7 +97,7 @@ Snapshot — первичный инструмент, property-тесты — д
 - **Multi-admin — симметричные права.** В MVP: Users-table admin == config-admin == "имеет всё". Любой role-split — post-MVP через `Role` column.
 - **Детерминизм resolve.** Incomparable tie + разные values → **409, не silent выбор**. Spec §4 invariant.
 - **TagSet canonical JSON byte-identical.** Ordinal key sort. Любое отступление ломает UNIQUE index + ETag determinism.
-- **Runner template — server-side transformation.** Клиент шлёт `?template=dotnet`, сервер возвращает готовые `db__host` пары. Никакой client-side адаптации (иначе каждый SDK повторяет логику с drift'ом).
+- **Alias template — server-side transformation.** Клиент шлёт `?template=dotnet`, сервер возвращает готовые `db__host` / `db:host` / `DB_HOST` пары согласно template'у. Никакой client-side адаптации (иначе каждый SDK повторяет логику с drift'ом).
 - **Локализация с первого дня.** User-facing strings — literal English ASCII, через `IStringLocalizer`. CI non-ASCII check на `Pages/` + `ts/`.
 - **UI-селекторы: `data-testid` обязателен.** Никаких `GetByText` / CSS / role-with-name.
 - **Frontend build — Release-only.** `bun build` только в `$(Configuration) == Release` в MSBuild target. Dev — отдельный `bun run dev` watcher через `./build.sh --target=Dev`.
@@ -128,4 +124,4 @@ Observations из v1 stack; актуальны для v2 после перено
 
 - [ ] **Priority-flag на tag-key** — нужен ли эскейп-хэтч из fail-fast, или incomparable tie всегда ошибка дизайна (admin добавляет overlay)? Решение — после первых weeks прод-использования.
 - [ ] **Facet-filter UX scale** — как выглядит dashboard с 200+ bindings и 5-dim tag-vocabulary? Virtual scroll? Group-by-tag-value? Решение — при прорастании беспокойства.
-- [ ] **Runner transport fallback** — если `/v1/conf` недоступен на startup'е, runner должен ретраить / падать / использовать cached-response-file? По умолчанию MVP = exit 4, container crashloop'ит, orchestrator решает. Local-file-cache fallback — post-MVP (пакуется в E.x по надобности).
+- [ ] **Consumer runtime — SDK-первый vs runner-первый.** `yobaconf-run` sidecar CLI (fetch → env-export → exec child) — snapshot-only модель: конфиг не перечитывается без restart'а контейнера. Реальные сценарии владельца требуют hot-reload через `IOptionsSnapshot` / `IOptionsMonitor` в ASP.NET, с запретом на Serilog-подобные библиотеки, кэширующие конфиг на startup'е. SDK (`YobaConf.Client` + `IConfigurationProvider` с ETag polling) решает это из коробки. Runner может иметь место для не-.NET сервисов или zero-coupling Docker entrypoint'а — но пока не основной путь. Решение — после нескольких weeks реального SDK-использования. Если runner оживёт: отдельный открытый под-вопрос — transport fallback при недоступности `/v1/conf` на startup'е (retry / fail / cached-response-file).
