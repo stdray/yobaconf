@@ -46,9 +46,6 @@ public sealed class SqliteBindingStore : IBindingStore, IBindingStoreAdmin
 	{
 		var db = SQLiteTools.CreateDataConnection(
 			$"Data Source={dbPath};Cache=Shared;Pooling=True;Foreign Keys=True");
-		// WAL mode persists at the DB level so this PRAGMA is idempotent — the first
-		// connection after file-create sets it, subsequent calls are a no-op read.
-		db.Execute("PRAGMA journal_mode=WAL;");
 		return db;
 	}
 

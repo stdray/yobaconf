@@ -32,7 +32,6 @@ public sealed class SqliteAuditLogStore : IAuditLogStore
 	{
 		var db = SQLiteTools.CreateDataConnection(
 			$"Data Source={dbPath};Cache=Shared;Pooling=True;Foreign Keys=True");
-		db.Execute("PRAGMA journal_mode=WAL;");
 		return db;
 	}
 

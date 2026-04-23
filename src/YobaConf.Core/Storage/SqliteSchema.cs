@@ -26,6 +26,11 @@ static class SqliteSchema
 	{
 		ArgumentNullException.ThrowIfNull(db);
 
+		// WAL at the DB-file level — set once during schema init, not on every per-call
+		// Open(). SQLite stores journal_mode persistently on disk so subsequent connections
+		// inherit it automatically.
+		db.Execute("PRAGMA journal_mode=WAL;");
+
 		var current = db.Query<long>("PRAGMA user_version;").First();
 
 		// v1 → v2: drop path-tree leftovers + incompatible AuditLog layout. Gated on < 2

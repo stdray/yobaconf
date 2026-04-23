@@ -40,7 +40,6 @@ public sealed class SqliteApiKeyStore : IApiKeyStore, IApiKeyAdmin
 	{
 		var db = SQLiteTools.CreateDataConnection(
 			$"Data Source={dbPath};Cache=Shared;Pooling=True;Foreign Keys=True");
-		db.Execute("PRAGMA journal_mode=WAL;");
 		return db;
 	}
 

@@ -112,7 +112,9 @@ Snapshot — первичный инструмент, property-тесты — д
 
 Observations из v1 stack; актуальны для v2 после переноса SqliteBindingStore на аналогичный pattern.
 
-- [ ] **Cold-start первого SQLite-запроса.** v1 показал 133ms vs 1-8ms на subsequent'ах. Причина — `PRAGMA journal_mode=WAL` per-connection в `SqliteConfigStore.Open()`. Warmup в `/ready` handler нивелирует — либо WAL в ctor один раз.
+- [x] **Cold-start первого SQLite-запроса.** v1 показал 133ms vs 1-8ms на subsequent'ах. Причина — `PRAGMA journal_mode=WAL` per-connection в `SqliteConfigStore.Open()`. Warmup в `/ready` handler нивелирует — либо WAL в ctor один раз.
+
+  Moved `PRAGMA journal_mode=WAL;` out of per-call `Open()` into one-time `SqliteSchema.EnsureSchema()` (schema-init phase, before reading `user_version`). WAL persists at DB-file level so subsequent connections inherit it automatically.
 - [ ] **N+1 в candidate-lookup.** v1 variable-resolve делал 6 запросов (2 per scope level). v2 tagged модели проще — один `WHERE subset` запрос на resolve.
 
 ## Расщепление документации
