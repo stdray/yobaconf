@@ -64,34 +64,11 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
-      - name: Bun install (frontend)
-        working-directory: src/YobaConf.Web
-        run: bun install --frozen-lockfile
-
-      - name: English-only (user-facing files, spec §12)
-        run: |
-          set -e
-          if grep -RPn '[^\x00-\x7F]' \
-              src/YobaConf.Web/ts \
-              src/YobaConf.Web/Pages \
-              2>/dev/null; then
-            echo "::error::Non-ASCII characters in user-facing files. English-only until i18n scaffold lands (spec §12)."
-            exit 1
-          fi
-
-      - name: Biome check
-        working-directory: src/YobaConf.Web
-        run: bun run lint
-
-      - name: TypeScript typecheck
-        working-directory: src/YobaConf.Web
-        run: bun run typecheck
-
-      - name: Dotnet format verify
-        run: |
-          dotnet restore YobaConf.slnx
-          dotnet format YobaConf.slnx --verify-no-changes --no-restore
-
+      # All lint / verify rules live in build.cake — the Cake `CI` target depends on
+      # `Lint` (inline-script gate + English-only + Biome + tsc + dotnet format) then
+      # `Test` + `E2ETest`. ci.yml only sets up the runner environment; the Cake DAG
+      # decides what runs and in what order. `bun install --frozen-lockfile` is a
+      # `FrontendInstall` Cake task pulled in by FrontendLint / FrontendTypecheck.
       - name: Cake CI target (Lint + Test + E2E)
         run: |
           chmod +x ./build.sh

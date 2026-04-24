@@ -354,16 +354,102 @@ Task("Dev")
 	KillAll();
 });
 
-// Source-of-truth lint for yobaconf-specific text-level rules. ci.yml only
-// invokes targets — the rules live here so `./build.sh --target=Lint` works
-// identically for local dev and CI. Fast pure text scan, no Build dependency.
+// ───────────────────────────────────────────────────────────────────────────────
+// Lint / verify — the single source of truth for every style/type/format check
+// that ran inline in ci.yml before this refactor. ci.yml now only sets up the
+// runner environment (checkout, setup-dotnet, setup-bun, caches) and invokes
+// `./build.sh --target=CI`; every rule definition lives here.
 //
-// Current rules:
-//   - No inline <script> blocks with logic in Razor templates (AGENTS.md).
-//     Match opens that lack src= AND lack a type= marking the body as inert
-//     data (application/json, application/ld+json, text/template). Future
-//     rules (more invariants from AGENTS.md §Hard invariants) go here.
-Task("Lint")
+// Each sub-task is individually runnable: `./build.sh --target=FormatVerify`,
+// `--target=FrontendLint`, `--target=EnglishOnly`, etc. The `Lint` aggregator
+// depends on all of them; `CI` depends on Lint (fast-fail before Test/E2E).
+// ───────────────────────────────────────────────────────────────────────────────
+
+// Helper: shell-out with non-zero-exit → CakeException. Keeps sub-task bodies tight.
+void RunCmd(string exe, string args, string workingDir = null)
+{
+	var settings = new ProcessSettings { Arguments = args };
+	if (workingDir != null) settings.WorkingDirectory = workingDir;
+	var exitCode = StartProcess(exe, settings);
+	if (exitCode != 0)
+		throw new CakeException($"`{exe} {args}` exited with code {exitCode}");
+}
+
+Task("FrontendInstall")
+	.Does(() => RunCmd("bun", "install --frozen-lockfile", "src/YobaConf.Web"));
+
+// Biome (TS/JS lint + format check) — package.json script delegates to biome check.
+Task("FrontendLint")
+	.IsDependentOn("FrontendInstall")
+	.Does(() => RunCmd("bun", "run lint", "src/YobaConf.Web"));
+
+// `tsc --noEmit` — type safety without producing output.
+Task("FrontendTypecheck")
+	.IsDependentOn("FrontendInstall")
+	.Does(() => RunCmd("bun", "run typecheck", "src/YobaConf.Web"));
+
+// Non-Latin-script gate (AGENTS.md Localization invariant). The goal of the
+// rule is "no un-localized content": any text that would need a translation
+// pass when i18n scaffolding (IStringLocalizer) lands. Western typography
+// (em-dash, en-dash, bullet, arrows, curly quotes, ellipsis), accented Latin,
+// and decorative emoji don't require translation — they stay. Scripts that
+// are a clear localization marker do not: Cyrillic, Hebrew, Arabic, Syriac,
+// CJK ideographs, Hangul, Hiragana, Katakana.
+//
+// Comments in src/YobaConf.Core + tests/ are exempt (not scanned per AGENTS.md).
+// The original ci.yml check was `grep [^\x00-\x7F]` which over-matched on
+// typography and would flag currently-intentional UI glyphs (bullets, arrows,
+// reveal eye, …) — this task narrows to the real localization signal.
+Task("EnglishOnly")
+	.Does(() =>
+{
+	var roots = new[] { "src/YobaConf.Web/ts", "src/YobaConf.Web/Pages" };
+	var nonLatinScriptPattern = new System.Text.RegularExpressions.Regex(
+		@"[Ѐ-ԯ" +   // Cyrillic + Cyrillic Supplement
+		@"԰-֏" +    // Armenian
+		@"֐-׿" +    // Hebrew
+		@"؀-ۿ" +    // Arabic
+		@"܀-ݏ" +    // Syriac
+		@"ऀ-ॿ" +    // Devanagari
+		@"⺀-鿿" +    // CJK radicals + basic + unified ideographs
+		@"가-힯" +    // Hangul syllables
+		@"぀-ゟ" +    // Hiragana
+		@"゠-ヿ]");   // Katakana
+	var violations = new List<string>();
+	var scannedCount = 0;
+
+	foreach (var root in roots)
+	{
+		if (!System.IO.Directory.Exists(root)) continue;
+		foreach (var file in System.IO.Directory.EnumerateFiles(root, "*", System.IO.SearchOption.AllDirectories))
+		{
+			string[] lines;
+			try { lines = System.IO.File.ReadAllLines(file); }
+			catch { continue; } // skip unreadable / binary
+			scannedCount++;
+			for (int i = 0; i < lines.Length; i++)
+			{
+				if (nonLatinScriptPattern.IsMatch(lines[i]))
+					violations.Add($"  {file}:{i + 1}: {lines[i].TrimEnd()}");
+			}
+		}
+	}
+
+	if (violations.Count > 0)
+	{
+		Error("Non-Latin-script content in user-facing source (AGENTS.md §Localization):");
+		foreach (var v in violations) Error(v);
+		Error("User-facing text should be English ASCII until IStringLocalizer i18n lands.");
+		throw new CakeException($"{violations.Count} non-Latin-script line(s) in user-facing source.");
+	}
+	Information($"EnglishOnly: {scannedCount} file(s) under ts/ + Pages/ checked, no non-Latin-script content.");
+});
+
+// No inline <script> blocks with logic in Razor templates (AGENTS.md invariant).
+// Match opens that lack src= AND lack a type= marking the body as inert data
+// (application/json, application/ld+json, text/template) — future i18n via
+// client-side JSON strings stays exempt by design.
+Task("LintInlineScripts")
 	.Does(() =>
 {
 	var inlineScriptPattern = new System.Text.RegularExpressions.Regex(
@@ -392,9 +478,27 @@ Task("Lint")
 		Error("See AGENTS.md 'No inline JavaScript logic in Razor' invariant.");
 		throw new CakeException($"{violations.Count} inline <script> violation(s) in Pages/.");
 	}
-
-	Information($"Lint: {cshtmlFiles.Count} .cshtml file(s) checked, 0 inline <script> violations.");
+	Information($"LintInlineScripts: {cshtmlFiles.Count} .cshtml file(s) checked, 0 violations.");
 });
+
+// `dotnet format --verify-no-changes` — whitespace / formatting gate. Restore
+// first so analyzers resolve; --no-restore on format avoids a redundant second
+// restore pass.
+Task("FormatVerify")
+	.Does(() =>
+{
+	RunCmd("dotnet", $"restore {solution}");
+	RunCmd("dotnet", $"format {solution} --verify-no-changes --no-restore");
+});
+
+// Aggregator: all fast style/type/format checks. Dev-loop entry: `./build.sh --target=Lint`.
+// Each sub-task is also independently runnable for tighter focus.
+Task("Lint")
+	.IsDependentOn("LintInlineScripts")
+	.IsDependentOn("EnglishOnly")
+	.IsDependentOn("FrontendLint")
+	.IsDependentOn("FrontendTypecheck")
+	.IsDependentOn("FormatVerify");
 
 // Single-target entry point for the PR-only `ci` job — Lint fast-fails before
 // the heavier Test/E2ETest phases. Test + E2ETest share the Build task (Cake DAG).
