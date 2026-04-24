@@ -234,6 +234,87 @@ public sealed class ResolvePipelineTests
             .Which.Json.Should().Be("""{"a":2,"m":{"a":4,"b":3},"z":1}""");
     }
 
+    // ---- Phase C.1: non-Flat template snapshots ----
+
+    [Fact]
+    public void Template_Dotnet_ProducesFlatWithDoubleUnderscore()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "db.host", "\"x\""));
+        store.Upsert(Plain(TagSet.Empty, "db.port", "5432"));
+
+        var outcome = new ResolvePipeline(store).Resolve(
+            new Dictionary<string, string>(),
+            allowedKeyPrefixes: null,
+            template: ResponseTemplate.Dotnet);
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"db__host":"x","db__port":5432}""");
+    }
+
+    [Fact]
+    public void Template_Envvar_UppercasesAndSingleUnderscore()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "db.host", "\"x\""));
+        store.Upsert(Plain(TagSet.Empty, "log-level", "\"Info\""));
+
+        var outcome = new ResolvePipeline(store).Resolve(
+            new Dictionary<string, string>(),
+            allowedKeyPrefixes: null,
+            template: ResponseTemplate.Envvar);
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"DB_HOST":"x","LOG_LEVEL":"Info"}""");
+    }
+
+    [Fact]
+    public void Template_EnvvarDeep_DotsBecomeDoubleUnderscore()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "db.host", "\"x\""));
+        store.Upsert(Plain(TagSet.Empty, "cache.policy.lru", "true"));
+
+        var outcome = new ResolvePipeline(store).Resolve(
+            new Dictionary<string, string>(),
+            allowedKeyPrefixes: null,
+            template: ResponseTemplate.EnvvarDeep);
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"CACHE__POLICY__LRU":true,"DB__HOST":"x"}""");
+    }
+
+    [Fact]
+    public void Template_AliasOverride_WinsInPipeline()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(new Binding
+        {
+            Id = 0,
+            TagSet = TagSet.Empty,
+            KeyPath = "aws-access-key-id",
+            Kind = BindingKind.Plain,
+            ValuePlain = "\"AKIA1234\"",
+            ContentHash = string.Empty,
+            UpdatedAt = DateTimeOffset.UnixEpoch,
+            Aliases = new Dictionary<string, string> { ["envvar"] = "AWS_ACCESS_KEY_ID" },
+        });
+        store.Upsert(Plain(TagSet.Empty, "other", "\"x\""));
+
+        var outcome = new ResolvePipeline(store).Resolve(
+            new Dictionary<string, string>(),
+            allowedKeyPrefixes: null,
+            template: ResponseTemplate.Envvar);
+
+        var json = outcome.Should().BeOfType<ResolveSuccess>().Subject.Json;
+        json.Should().Contain("\"AWS_ACCESS_KEY_ID\":\"AKIA1234\"");
+        json.Should().NotContain("AWS-ACCESS-KEY-ID");
+    }
+
     [Fact]
     public void Secret_Tied_Always_Conflicts_EvenIfSecretCiphertextHappenedToMatch()
     {

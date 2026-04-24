@@ -181,6 +181,61 @@ public sealed class ConfEndpointTests : IDisposable
         body.Should().Be("""{"cache":{"ttl":300},"db":{"host":"x"}}""");
     }
 
+    // ---- Phase C.1: template response shapes ----
+
+    [Fact]
+    public async Task DotnetTemplate_ReturnsFlatDoubleUnderscoreJson()
+    {
+        var (bindings, keys) = Admin();
+        bindings.Upsert(Plain(TagSet.Empty, "db.host", "\"prod-db\""));
+        bindings.Upsert(Plain(TagSet.Empty, "db.port", "5432"));
+        var key = keys.Create(TagSet.Empty, null, "k", DateTimeOffset.UtcNow);
+
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-YobaConf-ApiKey", key.Plaintext);
+
+        var res = await client.GetAsync(new Uri("/v1/conf?template=dotnet", UriKind.Relative));
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await res.Content.ReadAsStringAsync();
+        body.Should().Be("""{"db__host":"prod-db","db__port":5432}""");
+    }
+
+    [Fact]
+    public async Task UnknownTemplate_Returns400()
+    {
+        var (_, keys) = Admin();
+        var key = keys.Create(TagSet.Empty, null, "k", DateTimeOffset.UtcNow);
+
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-YobaConf-ApiKey", key.Plaintext);
+
+        var res = await client.GetAsync(new Uri("/v1/conf?template=unknown", UriKind.Relative));
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var body = await res.Content.ReadAsStringAsync();
+        body.Should().Contain("Unknown template");
+    }
+
+    [Fact]
+    public async Task ETag_StableAcrossRequests_WithSameTemplate()
+    {
+        var (bindings, keys) = Admin();
+        bindings.Upsert(Plain(TagSet.Empty, "k", "\"v\""));
+        var key = keys.Create(TagSet.Empty, null, "k", DateTimeOffset.UtcNow);
+
+        using var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-YobaConf-ApiKey", key.Plaintext);
+
+        var first = await client.GetAsync(new Uri("/v1/conf?template=envvar", UriKind.Relative));
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        var etag = first.Headers.ETag!.Tag;
+
+        var second = await client.GetAsync(new Uri("/v1/conf?template=envvar", UriKind.Relative));
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+        second.Headers.ETag!.Tag.Should().Be(etag);
+    }
+
     [Fact]
     public async Task QueryString_ApiKey_Works_When_Header_Absent()
     {

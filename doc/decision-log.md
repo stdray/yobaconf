@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-04-24 — C.1 template-response shapes закрыт инкрементально
+
+**Решение:** задача C.1 закрывается добавлением snapshot-покрытия на pipeline- и endpoint-уровне, без отдельного коммита реализации.
+
+**Почему инкрементально:** реализация `ResponseTemplate`, `ApplyTemplate`, и query-param `?template=` на `/v1/conf` разворачивалась постепенно в рамках Phase B (storage → resolve → admin-UI → endpoints). Каждая итерация добавляла кусочек финальной функциональности, но C.1 как отдельный milestone не выделялся. Это нормально для greenfield: мелкий фич не требует выделенного коммита, если он не ломает existing-тесты.
+
+**Что добавлено:**
+- 4 pipeline-level snapshot-теста в `ResolvePipelineTests.cs` (dotnet, envvar, envvar-deep + alias-override).
+- 3 endpoint integration-теста в `ConfEndpointTests.cs` (dotnet happy-path, unknown → 400, ETag determinism).
+- `plan.md` C.1 помечен `[x]`.
+
+**Порядок фаз:** A → B → **first deploy** → C.1 → C.2+D→E. Первый deploy после закрытия B.6.
+
+**Cross-refs:**
+- `doc/plan.md` фаза C.1
+- `src/YobaConf.Core/Resolve/ResponseTemplate.cs` enum + Derive/Parse
+- `src/YobaConf.Core/Resolve/ResolvePipeline.cs` ApplyTemplate + CanonicalFlat
+- `src/YobaConf.Web/Endpoints/ConfEndpoint.cs` query-param парсинг
+
+---
+
 ## 2026-04-24 — Индентация C#: дефолт форматтера (4 пробела) вместо tab/width=2
 
 **Решение:** из `.editorconfig` в `[*]`-секции убраны `indent_style = tab`, `tab_width = 2`, `indent_size = 2`. `dotnet format` теперь использует встроенный C#-дефолт (4 пробела). TS/JS продолжает форматироваться biome'ом (его дефолт — таб). Остальные поля `[*]` (charset, EOL, final newline, trim trailing ws) остались.
