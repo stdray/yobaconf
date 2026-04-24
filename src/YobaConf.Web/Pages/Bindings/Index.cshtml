@@ -110,20 +110,4 @@ else
 		</table>
 	</div>
 }
-
-<script>
-	// 10-second auto-hide for revealed secrets: if the URL carries ?revealId=..., rewrite
-	// it out after the timeout so a reload doesn't resurrect the plaintext.
-	(() => {
-		const params = new URLSearchParams(window.location.search);
-		if (!params.has('revealId')) return;
-		setTimeout(() => {
-			params.delete('revealId');
-			const url = window.location.pathname + (params.toString() ? '?' + params : '');
-			window.history.replaceState({}, '', url);
-			document.querySelectorAll('[data-testid="bindings-secret-revealed"]').forEach(el => {
-				el.textContent = '••••••';
-			});
-		}, 10000);
-	})();
-</script>
+@* Auto-hide JS lives in src/YobaConf.Web/ts/bindings-reveal-auto-hide.ts (loaded via admin.js bundle). *@
