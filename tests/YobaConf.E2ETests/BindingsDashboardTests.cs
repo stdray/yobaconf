@@ -55,6 +55,27 @@ public sealed class BindingsDashboardTests(WebAppFixture app, ITestOutputHelper 
     }
 
     [Fact]
+    public async Task Delete_Plain_Binding_Removes_Row_And_Appends_Audit()
+    {
+        app.BindingAdmin.Upsert(Plain(TagSet.Empty, "delete-me", "\"value\""));
+
+        await _page!.GotoAsync("/Bindings");
+        await Expect(_page.GetByTestId("bindings-row")).ToHaveCountAsync(1);
+
+        // Native confirm() — accept so the delete form submits.
+        _page.Dialog += (_, dlg) => _ = dlg.AcceptAsync();
+        await _page.GetByTestId("bindings-delete").ClickAsync();
+
+        // Soft-deleted rows are filtered out of ListActive.
+        await Expect(_page.GetByTestId("bindings-row")).ToHaveCountAsync(0);
+
+        var audit = app.Services.GetRequiredService<IAuditLogStore>();
+        var deleted = audit.Query(AuditEntityType.Binding, null, null, 100)
+            .FirstOrDefault(r => r.Action == AuditAction.Deleted && r.KeyPath == "delete-me");
+        deleted.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task Filter_By_Tag_Narrows_The_List()
     {
         app.BindingAdmin.Upsert(Plain(TagSet.From([new("env", "prod")]), "db.host", "\"prod-db\""));

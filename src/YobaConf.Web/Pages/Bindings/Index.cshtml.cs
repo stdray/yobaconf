@@ -11,17 +11,20 @@ namespace YobaConf.Web.Pages.Bindings;
 public sealed class IndexModel : PageModel
 {
     readonly IBindingStore _store;
+    readonly IBindingStoreAdmin _admin;
     readonly ISecretEncryptor? _encryptor;
     readonly IAuditLogStore _audit;
     readonly IMemoryCache _cache;
 
     public IndexModel(
         IBindingStore store,
+        IBindingStoreAdmin admin,
         ISecretEncryptor? encryptor = null,
         IAuditLogStore audit = null!,
         IMemoryCache cache = null!)
     {
         _store = store;
+        _admin = admin;
         _encryptor = encryptor;
         _audit = audit;
         _cache = cache;
@@ -44,6 +47,9 @@ public sealed class IndexModel : PageModel
     public void OnGet(string? q)
     {
         KeyQuery = string.IsNullOrWhiteSpace(q) ? null : q.Trim();
+        var flash = Request.Query["deleteSuccess"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(flash))
+            SuccessMessage = "Binding deleted.";
 
         var all = _store.ListActive();
 
@@ -76,6 +82,14 @@ public sealed class IndexModel : PageModel
 
         var matching = all.Where(b => MatchesTagFilter(b, filter) && MatchesKeyQuery(b, KeyQuery));
         Rows = [.. matching.Select(b => new Row(b))];
+    }
+
+    public IActionResult OnPostDelete(long id)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var userName = User?.Identity?.Name ?? "system";
+        _admin.SoftDelete(id, now, userName);
+        return RedirectToPage("Index");
     }
 
     public IActionResult OnPostReveal(long id)

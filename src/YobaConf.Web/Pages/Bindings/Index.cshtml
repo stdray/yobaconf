@@ -98,9 +98,14 @@ else
 							}
 						</td>
 						<td class="text-xs opacity-60" data-testid="bindings-updated">@r.Binding.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-						<td>
+						<td class="text-right">
 							<a asp-page="/Bindings/Edit" asp-route-id="@r.Binding.Id" class="btn btn-xs btn-ghost"
 								data-testid="bindings-edit">Edit</a>
+							<form method="post" asp-page-handler="Delete" asp-route-id="@r.Binding.Id"
+								class="inline" onsubmit="return confirm('Delete this binding?');">
+								<button type="submit" class="btn btn-xs btn-ghost text-error"
+									data-testid="bindings-delete">Delete</button>
+							</form>
 						</td>
 					</tr>
 				}
