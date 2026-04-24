@@ -354,10 +354,54 @@ Task("Dev")
 	KillAll();
 });
 
-// Single-target entry point for the PR-only `ci` job — Test + E2ETest share the Build
-// task (Cake DAG). Keeps the CI yml simple (one `./build.sh --target=CI` line) and
-// ensures E2E doesn't run if unit tests fail.
+// Source-of-truth lint for yobaconf-specific text-level rules. ci.yml only
+// invokes targets — the rules live here so `./build.sh --target=Lint` works
+// identically for local dev and CI. Fast pure text scan, no Build dependency.
+//
+// Current rules:
+//   - No inline <script> blocks with logic in Razor templates (AGENTS.md).
+//     Match opens that lack src= AND lack a type= marking the body as inert
+//     data (application/json, application/ld+json, text/template). Future
+//     rules (more invariants from AGENTS.md §Hard invariants) go here.
+Task("Lint")
+	.Does(() =>
+{
+	var inlineScriptPattern = new System.Text.RegularExpressions.Regex(
+		@"<script(?![^>]*\bsrc=)(?![^>]*\btype=""application/(?:json|ld\+json)"")(?![^>]*\btype=""text/template"")[^>]*>",
+		System.Text.RegularExpressions.RegexOptions.Compiled);
+
+	var pagesRoot = "src/YobaConf.Web/Pages";
+	var cshtmlFiles = GetFiles($"{pagesRoot}/**/*.cshtml");
+	var violations = new List<string>();
+
+	foreach (var file in cshtmlFiles)
+	{
+		var content = System.IO.File.ReadAllText(file.FullPath);
+		foreach (System.Text.RegularExpressions.Match m in inlineScriptPattern.Matches(content))
+		{
+			var lineNumber = 1 + content.Substring(0, m.Index).Count(c => c == '\n');
+			violations.Add($"  {file.FullPath}:{lineNumber}: {m.Value}");
+		}
+	}
+
+	if (violations.Count > 0)
+	{
+		Error($"Inline <script> block(s) with logic found in {pagesRoot}:");
+		foreach (var v in violations) Error(v);
+		Error("Move JS to src/YobaConf.Web/ts/ as TypeScript modules and import from ts/admin.ts (single bundle entry).");
+		Error("See AGENTS.md 'No inline JavaScript logic in Razor' invariant.");
+		throw new CakeException($"{violations.Count} inline <script> violation(s) in Pages/.");
+	}
+
+	Information($"Lint: {cshtmlFiles.Count} .cshtml file(s) checked, 0 inline <script> violations.");
+});
+
+// Single-target entry point for the PR-only `ci` job — Lint fast-fails before
+// the heavier Test/E2ETest phases. Test + E2ETest share the Build task (Cake DAG).
+// Keeps the CI yml simple (one `./build.sh --target=CI` line) and ensures heavy
+// work doesn't run if lint or unit tests fail.
 Task("CI")
+	.IsDependentOn("Lint")
 	.IsDependentOn("Test")
 	.IsDependentOn("E2ETest");
 

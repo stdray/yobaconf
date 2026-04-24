@@ -79,27 +79,6 @@ jobs:
             exit 1
           fi
 
-      - name: No inline JavaScript logic in Razor (AGENTS.md invariant)
-        run: |
-          set -e
-          # Match <script> opening tags that are BOTH:
-          #   - missing a src= attribute (external / bundle refs exempted), AND
-          #   - not carrying a type= that marks the body as inert data
-          #     (application/json / application/ld+json for client-side i18n or
-          #     structured-data blobs; text/template for Handlebars-style inline
-          #     templates).
-          # Anything else is treated as inline JS logic — forbidden per AGENTS.md
-          # 'No inline JavaScript logic in Razor' invariant. Localization scaffold
-          # (IStringLocalizer) isn't in place yet; when it lands and if it uses a
-          # <script type="application/json"> shape to ship strings to the client,
-          # the exclusion above already covers it.
-          if grep -RPn '<script(?![^>]*\bsrc=)(?![^>]*\btype="application/(json|ld\+json)")(?![^>]*\btype="text/template")[^>]*>' \
-              src/YobaConf.Web/Pages \
-              2>/dev/null; then
-            echo "::error::Inline <script> blocks with logic found in Pages/. Move JS to src/YobaConf.Web/ts/ as a TypeScript module; reference the bundle from _Layout.cshtml. See AGENTS.md 'No inline JavaScript logic in Razor' invariant."
-            exit 1
-          fi
-
       - name: Biome check
         working-directory: src/YobaConf.Web
         run: bun run lint
@@ -113,7 +92,7 @@ jobs:
           dotnet restore YobaConf.slnx
           dotnet format YobaConf.slnx --verify-no-changes --no-restore
 
-      - name: Cake CI target (Test + E2E)
+      - name: Cake CI target (Lint + Test + E2E)
         run: |
           chmod +x ./build.sh
           ./build.sh --target=CI
