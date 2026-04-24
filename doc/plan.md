@@ -69,13 +69,13 @@ Snapshot — первичный инструмент, property-тесты — д
 - [ ] **E.1 Paste-import `/Import` page.** Step 1: source textarea + format dropdown (JSON / YAML / `.env`) + target tag-picker. Step 2: classify table (per-leaf row: key / value / Plain|Secret radio). Step 3: Save → N bindings с общим target tag-set. Импорт-converter'ы (`JsonFlattener` etc.) переиспользуются из v1 (сохранены в A.0). 4 E2E.
 - [ ] **E.2 TagVocabulary + `/Tags` page.** `TagVocabulary(TagKey, AllowedValues, IsRequired, Description)` table. CRUD UI на `/Tags`. Warning-banner в `/Bindings` editor если binding использует unknown tag-key. 2 E2E.
 - [x] **E.3 Secret reveal single-read.** POST-endpoint с server-cached 10s window. Audit entry per reveal. Замена client-side reveal через data-attribute. 2 E2E.
-- [ ] **E.4 Master-key rotation CLI.** `yobaconf --rotate-master-key <old> <new>` — decrypt all `Kind=Secret` bindings с old, encrypt с new, bump `KeyVersion`, audit row per binding. 3 unit + 1 integration.
 - [x] **E.5 Tag-priority escape hatch.** `priority` column на TagVocabulary → tie-breaker при incomparable tie. Feature-flag off by default — fail-fast остаётся primary.
 - [ ] **E.6 Python SDK.** `pip install yobaconf` — async fetcher + Pydantic model validation + background ETag refresh. Pytest coverage.
 - [ ] **E.7 TypeScript SDK.** `@yobaconf/client` для bun/node — async refresh + typed accessor.
 - [ ] **E.8 Push integrations.** Export resolved JSON в Redis / Consul / S3 для sverxy-нагрузки use-cases.
 - [ ] **E.9 Read-replicas.** Litestream → read-only SQLite replicas.
 - [x] **E.10 Perf BDN.** `benchmarks/YobaConf.Benchmarks/` — resolve pipeline под 200 bindings × 5-dim tag-vector, target p99 < 50ms.
+- [ ] **E.11 Master-key rotation CLI.** `yobaconf --rotate-master-key <old> <new>` — decrypt all `Kind=Secret` bindings с old, encrypt с new, bump `KeyVersion`, audit row per binding. 3 unit + 1 integration. **Priority: tail of Phase E** — админские CLI-утилиты актуализируются только когда появится реальный инцидент-триггер (compromised key), а не по плану.
 
 ## Тестовое покрытие — приоритеты
 
