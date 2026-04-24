@@ -9,44 +9,44 @@ namespace YobaConf.Client;
 // network. Production uses the default SocketsHttpHandler.
 public sealed class YobaConfConfigurationOptions
 {
-	// e.g. "https://yobaconf.3po.su". Trailing slash optional — normalised internally.
-	public string BaseUrl { get; set; } = string.Empty;
+    // e.g. "https://yobaconf.3po.su". Trailing slash optional — normalised internally.
+    public string BaseUrl { get; set; } = string.Empty;
 
-	// Plaintext token. Sent as `X-YobaConf-ApiKey` header on every request.
-	public string ApiKey { get; set; } = string.Empty;
+    // Plaintext token. Sent as `X-YobaConf-ApiKey` header on every request.
+    public string ApiKey { get; set; } = string.Empty;
 
-	// Tag-vector components. Resolve finds every binding whose tag-set is a subset of
-	// this, mergees by specificity. Populate via `WithTag` or by direct add.
-	public Dictionary<string, string> Tags { get; } = new(StringComparer.Ordinal);
+    // Tag-vector components. Resolve finds every binding whose tag-set is a subset of
+    // this, mergees by specificity. Populate via `WithTag` or by direct add.
+    public Dictionary<string, string> Tags { get; } = new(StringComparer.Ordinal);
 
-	// How often to re-poll for changes. Each poll uses `If-None-Match: <etag>`, so 304s
-	// are cheap. Minimum sensible value is a few seconds; the SDK doesn't enforce a floor.
-	// Set to TimeSpan.Zero to disable polling (one-shot load at startup only).
-	public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromMinutes(5);
+    // How often to re-poll for changes. Each poll uses `If-None-Match: <etag>`, so 304s
+    // are cheap. Minimum sensible value is a few seconds; the SDK doesn't enforce a floor.
+    // Set to TimeSpan.Zero to disable polling (one-shot load at startup only).
+    public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromMinutes(5);
 
-	// When true, initial load failures (409, auth errors, network errors) don't throw —
-	// the provider starts with empty data and retries on the next poll tick. Matches the
-	// ConfigurationBuilder `optional: true` convention. Default false: missing config at
-	// startup is usually a broken-deploy signal, fail-fast surfaces it.
-	public bool Optional { get; set; }
+    // When true, initial load failures (409, auth errors, network errors) don't throw —
+    // the provider starts with empty data and retries on the next poll tick. Matches the
+    // ConfigurationBuilder `optional: true` convention. Default false: missing config at
+    // startup is usually a broken-deploy signal, fail-fast surfaces it.
+    public bool Optional { get; set; }
 
-	// Testing-only: inject a custom HttpMessageHandler (e.g. WebApplicationFactory's
-	// TestServer handler). Production leaves this null and the provider builds its own
-	// HttpClient with the default handler.
-	public HttpMessageHandler? Handler { get; set; }
+    // Testing-only: inject a custom HttpMessageHandler (e.g. WebApplicationFactory's
+    // TestServer handler). Production leaves this null and the provider builds its own
+    // HttpClient with the default handler.
+    public HttpMessageHandler? Handler { get; set; }
 
-	public YobaConfConfigurationOptions WithTag(string key, string value)
-	{
-		ArgumentException.ThrowIfNullOrEmpty(key);
-		ArgumentException.ThrowIfNullOrEmpty(value);
-		Tags[key] = value;
-		return this;
-	}
+    public YobaConfConfigurationOptions WithTag(string key, string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        ArgumentException.ThrowIfNullOrEmpty(value);
+        Tags[key] = value;
+        return this;
+    }
 
-	public YobaConfConfigurationOptions WithTags(IEnumerable<KeyValuePair<string, string>> tags)
-	{
-		ArgumentNullException.ThrowIfNull(tags);
-		foreach (var (k, v) in tags) WithTag(k, v);
-		return this;
-	}
+    public YobaConfConfigurationOptions WithTags(IEnumerable<KeyValuePair<string, string>> tags)
+    {
+        ArgumentNullException.ThrowIfNull(tags);
+        foreach (var (k, v) in tags) WithTag(k, v);
+        return this;
+    }
 }

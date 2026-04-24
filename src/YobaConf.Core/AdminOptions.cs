@@ -9,6 +9,6 @@ namespace YobaConf.Core;
 // Multi-admin with DB-backed users is Phase B+ (matches yobalog's progression).
 public sealed record AdminOptions
 {
-	public string Username { get; init; } = string.Empty;
-	public string PasswordHash { get; init; } = string.Empty;
+    public string Username { get; init; } = string.Empty;
+    public string PasswordHash { get; init; } = string.Empty;
 }

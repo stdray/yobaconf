@@ -6,5 +6,5 @@ namespace YobaConf.Web.Pages;
 // Real dashboard lands in B.4 (/Bindings); this disappears then.
 public sealed class IndexModel : PageModel
 {
-	public void OnGet() { }
+    public void OnGet() { }
 }

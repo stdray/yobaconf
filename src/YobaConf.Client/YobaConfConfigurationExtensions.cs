@@ -18,17 +18,17 @@ namespace YobaConf.Client;
 // the resolved YobaConf JSON. Changes poll-in every RefreshInterval via ETag conditional GET.
 public static class YobaConfConfigurationExtensions
 {
-	public static IConfigurationBuilder AddYobaConf(
-		this IConfigurationBuilder builder,
-		Action<YobaConfConfigurationOptions> configure)
-	{
-		ArgumentNullException.ThrowIfNull(builder);
-		ArgumentNullException.ThrowIfNull(configure);
+    public static IConfigurationBuilder AddYobaConf(
+        this IConfigurationBuilder builder,
+        Action<YobaConfConfigurationOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
 
-		var options = new YobaConfConfigurationOptions();
-		configure(options);
+        var options = new YobaConfConfigurationOptions();
+        configure(options);
 
-		builder.Add(new YobaConfConfigurationSource { Options = options });
-		return builder;
-	}
+        builder.Add(new YobaConfConfigurationSource { Options = options });
+        return builder;
+    }
 }

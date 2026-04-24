@@ -15,45 +15,45 @@ namespace YobaConf.Core.Resolve;
 //                                              uppercase)
 public enum ResponseTemplate
 {
-	Flat = 0,
-	Dotnet,
-	Envvar,
-	EnvvarDeep,
+    Flat = 0,
+    Dotnet,
+    Envvar,
+    EnvvarDeep,
 }
 
 public static class ResponseTemplateParser
 {
-	public static ResponseTemplate Parse(string? raw) => raw?.ToLowerInvariant() switch
-	{
-		null or "" or "flat" => ResponseTemplate.Flat,
-		"dotnet" => ResponseTemplate.Dotnet,
-		"envvar" => ResponseTemplate.Envvar,
-		"envvar-deep" or "envvar_deep" => ResponseTemplate.EnvvarDeep,
-		_ => throw new ArgumentException($"Unknown template '{raw}'. Expected: flat, dotnet, envvar, envvar-deep."),
-	};
+    public static ResponseTemplate Parse(string? raw) => raw?.ToLowerInvariant() switch
+    {
+        null or "" or "flat" => ResponseTemplate.Flat,
+        "dotnet" => ResponseTemplate.Dotnet,
+        "envvar" => ResponseTemplate.Envvar,
+        "envvar-deep" or "envvar_deep" => ResponseTemplate.EnvvarDeep,
+        _ => throw new ArgumentException($"Unknown template '{raw}'. Expected: flat, dotnet, envvar, envvar-deep."),
+    };
 
-	public static string Derive(string keyPath, ResponseTemplate template)
-	{
-		ArgumentNullException.ThrowIfNull(keyPath);
-		return template switch
-		{
-			ResponseTemplate.Flat => keyPath,
-			ResponseTemplate.Dotnet => ReplaceSep(keyPath, dot: "__", dash: "-", toUpper: false),
-			ResponseTemplate.Envvar => ReplaceSep(keyPath, dot: "_", dash: "_", toUpper: true),
-			ResponseTemplate.EnvvarDeep => ReplaceSep(keyPath, dot: "__", dash: "_", toUpper: true),
-			_ => throw new ArgumentOutOfRangeException(nameof(template)),
-		};
-	}
+    public static string Derive(string keyPath, ResponseTemplate template)
+    {
+        ArgumentNullException.ThrowIfNull(keyPath);
+        return template switch
+        {
+            ResponseTemplate.Flat => keyPath,
+            ResponseTemplate.Dotnet => ReplaceSep(keyPath, dot: "__", dash: "-", toUpper: false),
+            ResponseTemplate.Envvar => ReplaceSep(keyPath, dot: "_", dash: "_", toUpper: true),
+            ResponseTemplate.EnvvarDeep => ReplaceSep(keyPath, dot: "__", dash: "_", toUpper: true),
+            _ => throw new ArgumentOutOfRangeException(nameof(template)),
+        };
+    }
 
-	static string ReplaceSep(string input, string dot, string dash, bool toUpper)
-	{
-		var sb = new StringBuilder(input.Length + 8);
-		foreach (var c in input)
-		{
-			if (c == '.') sb.Append(dot);
-			else if (c == '-') sb.Append(dash);
-			else sb.Append(toUpper ? char.ToUpperInvariant(c) : c);
-		}
-		return sb.ToString();
-	}
+    static string ReplaceSep(string input, string dot, string dash, bool toUpper)
+    {
+        var sb = new StringBuilder(input.Length + 8);
+        foreach (var c in input)
+        {
+            if (c == '.') sb.Append(dot);
+            else if (c == '-') sb.Append(dash);
+            else sb.Append(toUpper ? char.ToUpperInvariant(c) : c);
+        }
+        return sb.ToString();
+    }
 }

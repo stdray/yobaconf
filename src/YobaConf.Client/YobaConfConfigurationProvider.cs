@@ -24,113 +24,113 @@ namespace YobaConf.Client;
 // partially-populated one.
 public sealed class YobaConfConfigurationProvider : ConfigurationProvider, IDisposable
 {
-	readonly YobaConfConfigurationOptions _options;
-	readonly HttpClient _http;
-	readonly Uri _endpoint;
-	Timer? _timer;
-	string? _lastEtag;
-	readonly Lock _pollGate = new();
-	bool _disposed;
+    readonly YobaConfConfigurationOptions _options;
+    readonly HttpClient _http;
+    readonly Uri _endpoint;
+    Timer? _timer;
+    string? _lastEtag;
+    readonly Lock _pollGate = new();
+    bool _disposed;
 
-	public YobaConfConfigurationProvider(YobaConfConfigurationOptions options)
-	{
-		ArgumentNullException.ThrowIfNull(options);
-		if (string.IsNullOrWhiteSpace(options.BaseUrl))
-			throw new ArgumentException("BaseUrl is required.", nameof(options));
-		if (string.IsNullOrWhiteSpace(options.ApiKey))
-			throw new ArgumentException("ApiKey is required.", nameof(options));
+    public YobaConfConfigurationProvider(YobaConfConfigurationOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (string.IsNullOrWhiteSpace(options.BaseUrl))
+            throw new ArgumentException("BaseUrl is required.", nameof(options));
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+            throw new ArgumentException("ApiKey is required.", nameof(options));
 
-		_options = options;
-		_http = options.Handler is null
-			? new HttpClient()
-			: new HttpClient(options.Handler, disposeHandler: false);
+        _options = options;
+        _http = options.Handler is null
+            ? new HttpClient()
+            : new HttpClient(options.Handler, disposeHandler: false);
 
-		var baseUri = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
-		_endpoint = new Uri(new Uri(baseUri), BuildQuery(options.Tags));
-	}
+        var baseUri = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
+        _endpoint = new Uri(new Uri(baseUri), BuildQuery(options.Tags));
+    }
 
-	public override void Load()
-	{
-		// Sync-over-async: ConfigurationBuilder.Build() is synchronous, same constraint as
-		// file-based providers. One-time at startup, not a hot path.
-		try
-		{
-			FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
-		}
-		catch (Exception) when (_options.Optional)
-		{
-			Data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-		}
+    public override void Load()
+    {
+        // Sync-over-async: ConfigurationBuilder.Build() is synchronous, same constraint as
+        // file-based providers. One-time at startup, not a hot path.
+        try
+        {
+            FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception) when (_options.Optional)
+        {
+            Data = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        }
 
-		if (_options.RefreshInterval > TimeSpan.Zero)
-		{
-			_timer = new Timer(
-				_ => _ = PollSafeAsync(),
-				state: null,
-				dueTime: _options.RefreshInterval,
-				period: _options.RefreshInterval);
-		}
-	}
+        if (_options.RefreshInterval > TimeSpan.Zero)
+        {
+            _timer = new Timer(
+                _ => _ = PollSafeAsync(),
+                state: null,
+                dueTime: _options.RefreshInterval,
+                period: _options.RefreshInterval);
+        }
+    }
 
-	async Task PollSafeAsync()
-	{
-		if (!_pollGate.TryEnter()) return;
-		try
-		{
-			await FetchAsync(CancellationToken.None).ConfigureAwait(false);
-		}
-		catch (Exception)
-		{
-			// Last-known-good preserved. Polling providers must never lose working config
-			// due to transient issues.
-			System.Diagnostics.Debug.WriteLine("YobaConf poll failed; keeping last-known-good data.");
-		}
-		finally
-		{
-			_pollGate.Exit();
-		}
-	}
+    async Task PollSafeAsync()
+    {
+        if (!_pollGate.TryEnter()) return;
+        try
+        {
+            await FetchAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Last-known-good preserved. Polling providers must never lose working config
+            // due to transient issues.
+            System.Diagnostics.Debug.WriteLine("YobaConf poll failed; keeping last-known-good data.");
+        }
+        finally
+        {
+            _pollGate.Exit();
+        }
+    }
 
-	async Task FetchAsync(CancellationToken cancellationToken)
-	{
-		using var request = new HttpRequestMessage(HttpMethod.Get, _endpoint);
-		request.Headers.TryAddWithoutValidation("X-YobaConf-ApiKey", _options.ApiKey);
-		if (!string.IsNullOrEmpty(_lastEtag))
-			request.Headers.IfNoneMatch.Add(new EntityTagHeaderValue(_lastEtag));
+    async Task FetchAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, _endpoint);
+        request.Headers.TryAddWithoutValidation("X-YobaConf-ApiKey", _options.ApiKey);
+        if (!string.IsNullOrEmpty(_lastEtag))
+            request.Headers.IfNoneMatch.Add(new EntityTagHeaderValue(_lastEtag));
 
-		using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
-		if (response.StatusCode == HttpStatusCode.NotModified) return;
+        if (response.StatusCode == HttpStatusCode.NotModified) return;
 
-		response.EnsureSuccessStatusCode();
+        response.EnsureSuccessStatusCode();
 
-		var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-		var etag = response.Headers.ETag?.Tag;
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var etag = response.Headers.ETag?.Tag;
 
-		using var doc = JsonDocument.Parse(body);
-		var next = JsonFlattener.Flatten(doc);
+        using var doc = JsonDocument.Parse(body);
+        var next = JsonFlattener.Flatten(doc);
 
-		Data = next;
-		_lastEtag = etag;
-		OnReload();
-	}
+        Data = next;
+        _lastEtag = etag;
+        OnReload();
+    }
 
-	static string BuildQuery(Dictionary<string, string> tags)
-	{
-		var parts = new List<string>(tags.Count);
-		// Stable order — helps server-side log grepping and caching. The resolve endpoint
-		// treats duplicate tag-keys with last-wins semantics, so ordering is just for our
-		// own readability.
-		foreach (var kv in tags.OrderBy(kv => kv.Key, StringComparer.Ordinal))
-			parts.Add($"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}");
-		return parts.Count == 0 ? "v1/conf" : $"v1/conf?{string.Join('&', parts)}";
-	}
+    static string BuildQuery(Dictionary<string, string> tags)
+    {
+        var parts = new List<string>(tags.Count);
+        // Stable order — helps server-side log grepping and caching. The resolve endpoint
+        // treats duplicate tag-keys with last-wins semantics, so ordering is just for our
+        // own readability.
+        foreach (var kv in tags.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            parts.Add($"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}");
+        return parts.Count == 0 ? "v1/conf" : $"v1/conf?{string.Join('&', parts)}";
+    }
 
-	public void Dispose()
-	{
-		if (_disposed) return;
-		_disposed = true;
-		_timer?.Dispose();
-		_http.Dispose();
-	}
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _timer?.Dispose();
+        _http.Dispose();
+    }
 }

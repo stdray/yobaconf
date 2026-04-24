@@ -11,7 +11,7 @@ public abstract record ResolveOutcome;
 public sealed record ResolveSuccess(string Json, string ETag) : ResolveOutcome;
 
 public sealed record ResolveConflict(string KeyPath, IReadOnlyList<ConflictCandidate> Candidates)
-	: ResolveOutcome;
+    : ResolveOutcome;
 
 // One of the tied-at-max-specificity bindings fighting over the same key. `ValueDisplay`
 // is safe to surface in 409 diagnostics — Plain bindings show the JSON-encoded scalar

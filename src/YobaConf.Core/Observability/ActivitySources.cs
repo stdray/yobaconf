@@ -17,9 +17,9 @@ namespace YobaConf.Core.Observability;
 // creates per request.
 public static class ActivitySources
 {
-	public const string ResolveSourceName = "YobaConf.Resolve";
-	public const string StorageSqliteSourceName = "YobaConf.Storage.Sqlite";
+    public const string ResolveSourceName = "YobaConf.Resolve";
+    public const string StorageSqliteSourceName = "YobaConf.Storage.Sqlite";
 
-	public static readonly ActivitySource Resolve = new(ResolveSourceName);
-	public static readonly ActivitySource StorageSqlite = new(StorageSqliteSourceName);
+    public static readonly ActivitySource Resolve = new(ResolveSourceName);
+    public static readonly ActivitySource StorageSqlite = new(StorageSqliteSourceName);
 }

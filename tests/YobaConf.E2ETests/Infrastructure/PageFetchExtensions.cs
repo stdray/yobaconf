@@ -13,33 +13,33 @@ namespace YobaConf.E2ETests.Infrastructure;
 // diagnostic instead of a UI-level wild goose chase.
 public static class PageFetchExtensions
 {
-	// Waits for the next response whose URL contains `urlContains` while `action` runs, then
-	// asserts status == expectedStatus. Throws with full context on mismatch.
-	//
-	// Returns the IResponse so callers can inspect body / headers / timing if needed.
-	public static async Task<IResponse> ExpectFetchAsync(
-		this IPage page,
-		string urlContains,
-		Func<Task> action,
-		int expectedStatus = 200)
-	{
-		ArgumentNullException.ThrowIfNull(page);
-		ArgumentException.ThrowIfNullOrEmpty(urlContains);
-		ArgumentNullException.ThrowIfNull(action);
+    // Waits for the next response whose URL contains `urlContains` while `action` runs, then
+    // asserts status == expectedStatus. Throws with full context on mismatch.
+    //
+    // Returns the IResponse so callers can inspect body / headers / timing if needed.
+    public static async Task<IResponse> ExpectFetchAsync(
+        this IPage page,
+        string urlContains,
+        Func<Task> action,
+        int expectedStatus = 200)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        ArgumentException.ThrowIfNullOrEmpty(urlContains);
+        ArgumentNullException.ThrowIfNull(action);
 
-		var waitTask = page.WaitForResponseAsync(r => r.Url.Contains(urlContains, StringComparison.Ordinal));
-		await action();
-		var response = await waitTask;
+        var waitTask = page.WaitForResponseAsync(r => r.Url.Contains(urlContains, StringComparison.Ordinal));
+        await action();
+        var response = await waitTask;
 
-		if (response.Status != expectedStatus)
-		{
-			string body;
-			try { body = await response.TextAsync(); }
-			catch (Exception ex) { body = $"<response body unreadable: {ex.Message}>"; }
-			throw new InvalidOperationException(
-				$"Expected {response.Request.Method} {response.Url} → {expectedStatus}, got {response.Status}.\n" +
-				$"Response body:\n{body}");
-		}
-		return response;
-	}
+        if (response.Status != expectedStatus)
+        {
+            string body;
+            try { body = await response.TextAsync(); }
+            catch (Exception ex) { body = $"<response body unreadable: {ex.Message}>"; }
+            throw new InvalidOperationException(
+                $"Expected {response.Request.Method} {response.Url} → {expectedStatus}, got {response.Status}.\n" +
+                $"Response body:\n{body}");
+        }
+        return response;
+    }
 }

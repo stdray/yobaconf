@@ -21,148 +21,148 @@ namespace YobaConf.Core.Converters;
 // merge semantics would be ambiguous (merge vs sequence-of-docs).
 public static class YamlToHoconConverter
 {
-	public static string Convert(string yamlText)
-	{
-		ArgumentNullException.ThrowIfNull(yamlText);
+    public static string Convert(string yamlText)
+    {
+        ArgumentNullException.ThrowIfNull(yamlText);
 
-		YamlStream stream;
-		try
-		{
-			stream = new YamlStream();
-			stream.Load(new StringReader(yamlText));
-		}
-		catch (YamlException ex)
-		{
-			throw new ImportException($"Invalid YAML: {ex.Message}", ex);
-		}
+        YamlStream stream;
+        try
+        {
+            stream = new YamlStream();
+            stream.Load(new StringReader(yamlText));
+        }
+        catch (YamlException ex)
+        {
+            throw new ImportException($"Invalid YAML: {ex.Message}", ex);
+        }
 
-		if (stream.Documents.Count == 0)
-			return "{}";
+        if (stream.Documents.Count == 0)
+            return "{}";
 
-		var root = stream.Documents[0].RootNode;
-		var sb = new StringBuilder();
-		Render(root, sb, indent: 0);
-		return sb.ToString();
-	}
+        var root = stream.Documents[0].RootNode;
+        var sb = new StringBuilder();
+        Render(root, sb, indent: 0);
+        return sb.ToString();
+    }
 
-	static void Render(YamlNode node, StringBuilder sb, int indent)
-	{
-		switch (node)
-		{
-			case YamlMappingNode map:
-				RenderMapping(map, sb, indent);
-				break;
-			case YamlSequenceNode seq:
-				RenderSequence(seq, sb, indent);
-				break;
-			case YamlScalarNode scalar:
-				sb.Append(FormatScalar(scalar));
-				break;
-			default:
-				throw new ImportException($"Unsupported YAML node type: {node.GetType().Name}");
-		}
-	}
+    static void Render(YamlNode node, StringBuilder sb, int indent)
+    {
+        switch (node)
+        {
+            case YamlMappingNode map:
+                RenderMapping(map, sb, indent);
+                break;
+            case YamlSequenceNode seq:
+                RenderSequence(seq, sb, indent);
+                break;
+            case YamlScalarNode scalar:
+                sb.Append(FormatScalar(scalar));
+                break;
+            default:
+                throw new ImportException($"Unsupported YAML node type: {node.GetType().Name}");
+        }
+    }
 
-	static void RenderMapping(YamlMappingNode map, StringBuilder sb, int indent)
-	{
-		if (map.Children.Count == 0)
-		{
-			sb.Append("{}");
-			return;
-		}
+    static void RenderMapping(YamlMappingNode map, StringBuilder sb, int indent)
+    {
+        if (map.Children.Count == 0)
+        {
+            sb.Append("{}");
+            return;
+        }
 
-		sb.Append('{').Append('\n');
-		var inner = indent + 1;
-		foreach (var pair in map.Children)
-		{
-			if (pair.Key is not YamlScalarNode keyNode)
-				throw new ImportException($"Unsupported YAML mapping key type: {pair.Key.GetType().Name} (only scalar keys supported)");
+        sb.Append('{').Append('\n');
+        var inner = indent + 1;
+        foreach (var pair in map.Children)
+        {
+            if (pair.Key is not YamlScalarNode keyNode)
+                throw new ImportException($"Unsupported YAML mapping key type: {pair.Key.GetType().Name} (only scalar keys supported)");
 
-			AppendIndent(sb, inner);
-			// Always quote the key — sidesteps HOCON's unquoted-string ambiguity
-			// (dots in keys would otherwise create nested paths).
-			sb.Append('"');
-			AppendHoconEscaped(sb, keyNode.Value ?? string.Empty);
-			sb.Append("\" = ");
-			Render(pair.Value, sb, inner);
-			sb.Append('\n');
-		}
-		AppendIndent(sb, indent);
-		sb.Append('}');
-	}
+            AppendIndent(sb, inner);
+            // Always quote the key — sidesteps HOCON's unquoted-string ambiguity
+            // (dots in keys would otherwise create nested paths).
+            sb.Append('"');
+            AppendHoconEscaped(sb, keyNode.Value ?? string.Empty);
+            sb.Append("\" = ");
+            Render(pair.Value, sb, inner);
+            sb.Append('\n');
+        }
+        AppendIndent(sb, indent);
+        sb.Append('}');
+    }
 
-	static void RenderSequence(YamlSequenceNode seq, StringBuilder sb, int indent)
-	{
-		if (seq.Children.Count == 0)
-		{
-			sb.Append("[]");
-			return;
-		}
+    static void RenderSequence(YamlSequenceNode seq, StringBuilder sb, int indent)
+    {
+        if (seq.Children.Count == 0)
+        {
+            sb.Append("[]");
+            return;
+        }
 
-		sb.Append('[').Append('\n');
-		var inner = indent + 1;
-		foreach (var item in seq.Children)
-		{
-			AppendIndent(sb, inner);
-			Render(item, sb, inner);
-			sb.Append('\n');
-		}
-		AppendIndent(sb, indent);
-		sb.Append(']');
-	}
+        sb.Append('[').Append('\n');
+        var inner = indent + 1;
+        foreach (var item in seq.Children)
+        {
+            AppendIndent(sb, inner);
+            Render(item, sb, inner);
+            sb.Append('\n');
+        }
+        AppendIndent(sb, indent);
+        sb.Append(']');
+    }
 
-	static string FormatScalar(YamlScalarNode scalar)
-	{
-		var value = scalar.Value ?? string.Empty;
+    static string FormatScalar(YamlScalarNode scalar)
+    {
+        var value = scalar.Value ?? string.Empty;
 
-		// Explicitly quoted in source → preserve as string regardless of content.
-		if (scalar.Style == ScalarStyle.DoubleQuoted || scalar.Style == ScalarStyle.SingleQuoted)
-			return QuoteHocon(value);
+        // Explicitly quoted in source → preserve as string regardless of content.
+        if (scalar.Style == ScalarStyle.DoubleQuoted || scalar.Style == ScalarStyle.SingleQuoted)
+            return QuoteHocon(value);
 
-		// Plain scalar: try to infer type.
-		if (string.Equals(value, "true", StringComparison.Ordinal) || string.Equals(value, "false", StringComparison.Ordinal))
-			return value;
+        // Plain scalar: try to infer type.
+        if (string.Equals(value, "true", StringComparison.Ordinal) || string.Equals(value, "false", StringComparison.Ordinal))
+            return value;
 
-		// YAML null representations: empty string, `null`, `~`.
-		if (value.Length == 0 || string.Equals(value, "null", StringComparison.Ordinal) || value == "~")
-			return "null";
+        // YAML null representations: empty string, `null`, `~`.
+        if (value.Length == 0 || string.Equals(value, "null", StringComparison.Ordinal) || value == "~")
+            return "null";
 
-		if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
-			return value;
-		if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-			return value;
+        if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            return value;
+        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            return value;
 
-		return QuoteHocon(value);
-	}
+        return QuoteHocon(value);
+    }
 
-	static string QuoteHocon(string value)
-	{
-		var sb = new StringBuilder(value.Length + 2);
-		sb.Append('"');
-		AppendHoconEscaped(sb, value);
-		sb.Append('"');
-		return sb.ToString();
-	}
+    static string QuoteHocon(string value)
+    {
+        var sb = new StringBuilder(value.Length + 2);
+        sb.Append('"');
+        AppendHoconEscaped(sb, value);
+        sb.Append('"');
+        return sb.ToString();
+    }
 
-	static void AppendIndent(StringBuilder sb, int level)
-	{
-		for (var i = 0; i < level; i++)
-			sb.Append("  ");
-	}
+    static void AppendIndent(StringBuilder sb, int level)
+    {
+        for (var i = 0; i < level; i++)
+            sb.Append("  ");
+    }
 
-	static void AppendHoconEscaped(StringBuilder sb, string s)
-	{
-		foreach (var c in s)
-		{
-			switch (c)
-			{
-				case '\\': sb.Append("\\\\"); break;
-				case '"': sb.Append("\\\""); break;
-				case '\n': sb.Append("\\n"); break;
-				case '\r': sb.Append("\\r"); break;
-				case '\t': sb.Append("\\t"); break;
-				default: sb.Append(c); break;
-			}
-		}
-	}
+    static void AppendHoconEscaped(StringBuilder sb, string s)
+    {
+        foreach (var c in s)
+        {
+            switch (c)
+            {
+                case '\\': sb.Append("\\\\"); break;
+                case '"': sb.Append("\\\""); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                default: sb.Append(c); break;
+            }
+        }
+    }
 }

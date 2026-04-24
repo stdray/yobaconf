@@ -8,18 +8,18 @@ namespace YobaConf.Core.Storage;
 [Table("Bindings")]
 sealed class BindingRow
 {
-	[Column, PrimaryKey, Identity] public long Id { get; set; }
-	[Column, NotNull] public string TagSetJson { get; set; } = string.Empty;
-	[Column] public int TagCount { get; set; }
-	[Column, NotNull] public string KeyPath { get; set; } = string.Empty;
-	[Column] public string? ValuePlain { get; set; }
-	[Column] public byte[]? Ciphertext { get; set; }
-	[Column] public byte[]? Iv { get; set; }
-	[Column] public byte[]? AuthTag { get; set; }
-	[Column] public string? KeyVersion { get; set; }
-	[Column, NotNull] public string Kind { get; set; } = string.Empty;
-	[Column, NotNull] public string ContentHash { get; set; } = string.Empty;
-	[Column] public long UpdatedAt { get; set; }
-	[Column] public int IsDeleted { get; set; }
-	[Column] public string? AliasesJson { get; set; }
+    [Column, PrimaryKey, Identity] public long Id { get; set; }
+    [Column, NotNull] public string TagSetJson { get; set; } = string.Empty;
+    [Column] public int TagCount { get; set; }
+    [Column, NotNull] public string KeyPath { get; set; } = string.Empty;
+    [Column] public string? ValuePlain { get; set; }
+    [Column] public byte[]? Ciphertext { get; set; }
+    [Column] public byte[]? Iv { get; set; }
+    [Column] public byte[]? AuthTag { get; set; }
+    [Column] public string? KeyVersion { get; set; }
+    [Column, NotNull] public string Kind { get; set; } = string.Empty;
+    [Column, NotNull] public string ContentHash { get; set; } = string.Empty;
+    [Column] public long UpdatedAt { get; set; }
+    [Column] public int IsDeleted { get; set; }
+    [Column] public string? AliasesJson { get; set; }
 }

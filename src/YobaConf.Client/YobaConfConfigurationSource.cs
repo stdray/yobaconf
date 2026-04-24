@@ -7,8 +7,8 @@ namespace YobaConf.Client;
 // state — just hand the provider the already-populated options.
 public sealed class YobaConfConfigurationSource : IConfigurationSource
 {
-	public YobaConfConfigurationOptions Options { get; init; } = new();
+    public YobaConfConfigurationOptions Options { get; init; } = new();
 
-	public IConfigurationProvider Build(IConfigurationBuilder builder) =>
-		new YobaConfConfigurationProvider(Options);
+    public IConfigurationProvider Build(IConfigurationBuilder builder) =>
+        new YobaConfConfigurationProvider(Options);
 }

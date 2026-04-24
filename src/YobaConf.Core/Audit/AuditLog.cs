@@ -12,41 +12,41 @@ namespace YobaConf.Core.Audit;
 //   User:    KeyPath carries the Username; Old/NewValue is "password-set" / "password-changed"
 //            marker (never plaintext).
 public sealed record AuditLogEntry(
-	long Id,
-	DateTimeOffset At,
-	string Actor,
-	AuditAction Action,
-	AuditEntityType EntityType,
-	string? TagSetJson,
-	string? KeyPath,
-	string? OldValue,
-	string? NewValue,
-	string? OldHash,
-	string? NewHash);
+    long Id,
+    DateTimeOffset At,
+    string Actor,
+    AuditAction Action,
+    AuditEntityType EntityType,
+    string? TagSetJson,
+    string? KeyPath,
+    string? OldValue,
+    string? NewValue,
+    string? OldHash,
+    string? NewHash);
 
 public enum AuditAction
 {
-	Created = 0,
-	Updated,
-	Deleted,
-	Restored,
+    Created = 0,
+    Updated,
+    Deleted,
+    Restored,
 }
 
 public enum AuditEntityType
 {
-	Binding = 0,
-	ApiKey,
-	User,
-	TagVocabulary,
+    Binding = 0,
+    ApiKey,
+    User,
+    TagVocabulary,
 }
 
 public interface IAuditLogStore
 {
-	// Reverse chrono — newest first for the history page default view.
-	IReadOnlyList<AuditLogEntry> ListRecent(int limit);
+    // Reverse chrono — newest first for the history page default view.
+    IReadOnlyList<AuditLogEntry> ListRecent(int limit);
 
-	// Filter by entity type / actor / key-path substring. All optional — null means any.
-	IReadOnlyList<AuditLogEntry> Query(AuditEntityType? entityType, string? actor, string? keyPathSubstring, int limit);
+    // Filter by entity type / actor / key-path substring. All optional — null means any.
+    IReadOnlyList<AuditLogEntry> Query(AuditEntityType? entityType, string? actor, string? keyPathSubstring, int limit);
 
-	AuditLogEntry? FindById(long id);
+    AuditLogEntry? FindById(long id);
 }

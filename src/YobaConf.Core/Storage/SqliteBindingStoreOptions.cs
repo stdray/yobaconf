@@ -6,6 +6,6 @@ namespace YobaConf.Core.Storage;
 // point at a per-test tmp path via a manual Options instance.
 public sealed record SqliteBindingStoreOptions
 {
-	public string DataDirectory { get; init; } = string.Empty;
-	public string FileName { get; init; } = "yobaconf.db";
+    public string DataDirectory { get; init; } = string.Empty;
+    public string FileName { get; init; } = "yobaconf.db";
 }

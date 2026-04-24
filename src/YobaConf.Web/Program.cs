@@ -9,8 +9,8 @@ using YobaConf.Web;
 // Mirrors yobalog's `--hash-password` entry point.
 if (args.Length >= 2 && args[0] == "--hash-password")
 {
-	Console.WriteLine(AdminPasswordHasher.Hash(args[1]));
-	return;
+    Console.WriteLine(AdminPasswordHasher.Hash(args[1]));
+    return;
 }
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,7 +21,7 @@ var builder = WebApplication.CreateBuilder(args);
 // on trace-id click-through. Stays enabled even when OTel tracing is off — the stamp
 // still reflects ASP.NET's own ambient Activity.
 builder.Logging.Configure(o => o.ActivityTrackingOptions =
-	ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
+    ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
 
 // Ship ILogger<T> events to yobalog via its Seq-compat endpoint. Empty ServerUrl =
 // provider not registered (console-only logging) — this is what integration tests see:
@@ -39,22 +39,22 @@ var seqUrl = builder.Configuration["YobaLog:ServerUrl"];
 var seqKey = builder.Configuration["YobaLog:ApiKey"];
 if (!string.IsNullOrWhiteSpace(seqUrl))
 {
-	var props = builder.Configuration.GetSection("YobaLog:Properties")
-		.GetChildren()
-		.Where(c => !string.IsNullOrEmpty(c.Value))
-		.ToDictionary(c => c.Key, c => (object)c.Value!);
-	props["Env"] = builder.Environment.EnvironmentName;
-	props["Ver"] = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
-	props["Sha"] = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local";
-	props["Host"] = Environment.MachineName;
+    var props = builder.Configuration.GetSection("YobaLog:Properties")
+        .GetChildren()
+        .Where(c => !string.IsNullOrEmpty(c.Value))
+        .ToDictionary(c => c.Key, c => (object)c.Value!);
+    props["Env"] = builder.Environment.EnvironmentName;
+    props["Ver"] = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev";
+    props["Sha"] = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local";
+    props["Host"] = Environment.MachineName;
 
-	builder.Logging.AddSeq(
-		serverUrl: seqUrl,
-		apiKey: seqKey,
-		enrichers:
-		[
-			.. props.Select(kv => (Action<EnrichingEvent>)(evt => evt.AddOrUpdateProperty(kv.Key, kv.Value))),
-		]);
+    builder.Logging.AddSeq(
+        serverUrl: seqUrl,
+        apiKey: seqKey,
+        enrichers:
+        [
+            .. props.Select(kv => (Action<EnrichingEvent>)(evt => evt.AddOrUpdateProperty(kv.Key, kv.Value))),
+        ]);
 }
 
 YobaConfApp.ConfigureServices(builder);

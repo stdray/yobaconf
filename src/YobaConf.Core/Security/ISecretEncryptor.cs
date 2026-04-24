@@ -11,14 +11,14 @@ namespace YobaConf.Core.Security;
 // is already in the Secrets schema so no migration is needed when rotation lands.
 public interface ISecretEncryptor
 {
-	EncryptedSecret Encrypt(string plaintext);
-	string Decrypt(byte[] ciphertext, byte[] iv, byte[] authTag, string keyVersion);
+    EncryptedSecret Encrypt(string plaintext);
+    string Decrypt(byte[] ciphertext, byte[] iv, byte[] authTag, string keyVersion);
 }
 
 // AES-GCM output bundle. Ciphertext + IV + AuthTag together are the complete payload
 // needed to decrypt; KeyVersion picks the decryption key when rotation is in use.
 public sealed record EncryptedSecret(
-	byte[] Ciphertext,
-	byte[] Iv,
-	byte[] AuthTag,
-	string KeyVersion);
+    byte[] Ciphertext,
+    byte[] Iv,
+    byte[] AuthTag,
+    string KeyVersion);

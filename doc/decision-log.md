@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-04-24 — Индентация C#: дефолт форматтера (4 пробела) вместо tab/width=2
+
+**Решение:** из `.editorconfig` в `[*]`-секции убраны `indent_style = tab`, `tab_width = 2`, `indent_size = 2`. `dotnet format` теперь использует встроенный C#-дефолт (4 пробела). TS/JS продолжает форматироваться biome'ом (его дефолт — таб). Остальные поля `[*]` (charset, EOL, final newline, trim trailing ws) остались.
+
+**Причины:**
+
+- **2-wide tab — не стандарт C#.** `dotnet format` по умолчанию и большинство open-source .NET-проектов используют 4 пробела; подтянутый дефолт снижает диффы при рефакторингах и миграциях SDK.
+- **Локальные AI-агенты (pi-coding-agent с Qwen3.6-35B / Qwen3.5-27B) эмпирически ломают `Edit`-диффы чаще на non-standard whitespace.** Experiment 2026-04-24 (`D:\my\scripts\llama.cpp\reports\pi_run_10_35b_vs_27b.md`): после переформатирования 35B-A3B закрыл E.3 Secret reveal одним коммитом за 15 минут; тот же таск до переформатирования падал повторно с corrupted-indent диффами.
+
+**Откатили:** первоначальное решение 2026-04-21 «табы ширины 2 из yobalog» — перенос был механическим, не учитывал разницу стандартов для C# vs TS. В yobalog то же правило тоже заменяется на дефолты (см. его decision-log той же даты).
+
+**Scope:** 89 `.cs`-файлов переформатированы одним коммитом без поведенческих изменений. Razor/TS не тронуты (biome уже использовал свой дефолт, совпадающий с предыдущим значением).
+
+---
+
 ## 2026-04-23 — WAL PRAGMA: один раз в schema-init, не в каждом Open()
 
 **Решение:** `PRAGMA journal_mode=WAL` вынесен из per-call `Open()` во всех пяти SQLite-сторах (Binding / ApiKey / User / AuditLog / TagVocabulary) в `SqliteSchema.EnsureSchema()` — один вызов на старте. Store-классы теперь только открывают соединение.
@@ -642,7 +657,7 @@ if (!string.IsNullOrWhiteSpace(seqUrl))
 
 ## 2026-04-21 — Репо-гигиена и тулинг зеркально из yobalog
 
-**Решение:** `.gitignore`, `.gitattributes`, `.editorconfig`, `global.json`, `Directory.Build.props`, `Directory.Packages.props` — скопированы из yobalog с минимальными правками (убран Kusto/linq2db/KustoLoco из Packages.props; добавлены HOCON/LiteDB после Phase A.1). Стиль кода (табы ширины 2, immutability-first, expression-bodied, omit implicit modifiers, strict TS, `data-testid`-only UI-селекторы) перенесён в AGENTS.md один-в-один.
+**Решение:** `.gitignore`, `.gitattributes`, `.editorconfig`, `global.json`, `Directory.Build.props`, `Directory.Packages.props` — скопированы из yobalog с минимальными правками (убран Kusto/linq2db/KustoLoco из Packages.props; добавлены HOCON/LiteDB после Phase A.1). Стиль кода (immutability-first, expression-bodied, omit implicit modifiers, strict TS, `data-testid`-only UI-селекторы) перенесён в AGENTS.md один-в-один. Правило индентации (изначально — табы шириной 2) впоследствии отменено, см. запись 2026-04-24.
 
 **Причина:** оба проекта на .NET 10 + bun + Tailwind + Razor SSR, один и тот же автор/команда. Разошедшиеся `.editorconfig` / `Directory.Build.props` = две копии одних и тех же правок при каждом bump SDK. Единый стиль = меньше переключения контекста.
 

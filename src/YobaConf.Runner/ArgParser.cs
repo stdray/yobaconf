@@ -10,7 +10,7 @@ namespace YobaConf.Runner;
 // Positional args after `--` are the child command + args; missing `--` is an error.
 public static class ArgParser
 {
-	public const string UsageText = """
+    public const string UsageText = """
 		Usage: yobaconf-run [OPTIONS] -- CHILD_CMD [CHILD_ARG...]
 
 		Options:
@@ -23,80 +23,80 @@ public static class ArgParser
 		Exit codes: 0=child-mirror, 2=conflict, 3=scope, 4=connection, 5=bad-args.
 		""";
 
-	public abstract record Result;
-	public sealed record Ok(RunnerOptions Options) : Result;
-	public sealed record Invalid(string Message) : Result;
+    public abstract record Result;
+    public sealed record Ok(RunnerOptions Options) : Result;
+    public sealed record Invalid(string Message) : Result;
 
-	public static Result Parse(string[] args, IDictionary envVars)
-	{
-		ArgumentNullException.ThrowIfNull(args);
-		ArgumentNullException.ThrowIfNull(envVars);
+    public static Result Parse(string[] args, IDictionary envVars)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        ArgumentNullException.ThrowIfNull(envVars);
 
-		string? endpoint = EnvOrNull(envVars, "YOBACONF_ENDPOINT");
-		string? apiKey = EnvOrNull(envVars, "YOBACONF_API_KEY");
-		string? template = EnvOrNull(envVars, "YOBACONF_TEMPLATE") ?? "envvar";
-		var tags = new Dictionary<string, string>(StringComparer.Ordinal);
-		var childArgs = new List<string>();
-		var seenDashDash = false;
+        string? endpoint = EnvOrNull(envVars, "YOBACONF_ENDPOINT");
+        string? apiKey = EnvOrNull(envVars, "YOBACONF_API_KEY");
+        string? template = EnvOrNull(envVars, "YOBACONF_TEMPLATE") ?? "envvar";
+        var tags = new Dictionary<string, string>(StringComparer.Ordinal);
+        var childArgs = new List<string>();
+        var seenDashDash = false;
 
-		for (var i = 0; i < args.Length; i++)
-		{
-			var a = args[i];
-			if (seenDashDash)
-			{
-				childArgs.Add(a);
-				continue;
-			}
+        for (var i = 0; i < args.Length; i++)
+        {
+            var a = args[i];
+            if (seenDashDash)
+            {
+                childArgs.Add(a);
+                continue;
+            }
 
-			if (a == "--") { seenDashDash = true; continue; }
+            if (a == "--") { seenDashDash = true; continue; }
 
-			if (TryConsumeValue(args, ref i, "--endpoint", out var v)) { endpoint = v; continue; }
-			if (TryConsumeValue(args, ref i, "--api-key", out v)) { apiKey = v; continue; }
-			if (TryConsumeValue(args, ref i, "--template", out v)) { template = v; continue; }
-			if (TryConsumeValue(args, ref i, "--tag", out v))
-			{
-				var eq = v.IndexOf('=');
-				if (eq <= 0 || eq == v.Length - 1)
-					return new Invalid($"--tag value '{v}' is not in KEY=VALUE form");
-				tags[v[..eq]] = v[(eq + 1)..];
-				continue;
-			}
+            if (TryConsumeValue(args, ref i, "--endpoint", out var v)) { endpoint = v; continue; }
+            if (TryConsumeValue(args, ref i, "--api-key", out v)) { apiKey = v; continue; }
+            if (TryConsumeValue(args, ref i, "--template", out v)) { template = v; continue; }
+            if (TryConsumeValue(args, ref i, "--tag", out v))
+            {
+                var eq = v.IndexOf('=');
+                if (eq <= 0 || eq == v.Length - 1)
+                    return new Invalid($"--tag value '{v}' is not in KEY=VALUE form");
+                tags[v[..eq]] = v[(eq + 1)..];
+                continue;
+            }
 
-			return new Invalid($"unknown argument '{a}'");
-		}
+            return new Invalid($"unknown argument '{a}'");
+        }
 
-		if (!seenDashDash || childArgs.Count == 0)
-			return new Invalid("missing child command — supply it after `--`");
-		if (string.IsNullOrEmpty(endpoint))
-			return new Invalid("--endpoint (or YOBACONF_ENDPOINT) is required");
-		if (string.IsNullOrEmpty(apiKey))
-			return new Invalid("--api-key (or YOBACONF_API_KEY) is required");
+        if (!seenDashDash || childArgs.Count == 0)
+            return new Invalid("missing child command — supply it after `--`");
+        if (string.IsNullOrEmpty(endpoint))
+            return new Invalid("--endpoint (or YOBACONF_ENDPOINT) is required");
+        if (string.IsNullOrEmpty(apiKey))
+            return new Invalid("--api-key (or YOBACONF_API_KEY) is required");
 
-		return new Ok(new RunnerOptions(endpoint, apiKey, tags, template, childArgs));
-	}
+        return new Ok(new RunnerOptions(endpoint, apiKey, tags, template, childArgs));
+    }
 
-	static bool TryConsumeValue(string[] args, ref int i, string name, out string value)
-	{
-		var a = args[i];
-		if (a == name)
-		{
-			if (i + 1 >= args.Length) { value = ""; return false; }
-			value = args[++i];
-			return true;
-		}
-		if (a.StartsWith(name + "=", StringComparison.Ordinal))
-		{
-			value = a[(name.Length + 1)..];
-			return true;
-		}
-		value = "";
-		return false;
-	}
+    static bool TryConsumeValue(string[] args, ref int i, string name, out string value)
+    {
+        var a = args[i];
+        if (a == name)
+        {
+            if (i + 1 >= args.Length) { value = ""; return false; }
+            value = args[++i];
+            return true;
+        }
+        if (a.StartsWith(name + "=", StringComparison.Ordinal))
+        {
+            value = a[(name.Length + 1)..];
+            return true;
+        }
+        value = "";
+        return false;
+    }
 
-	static string? EnvOrNull(IDictionary env, string key)
-	{
-		if (!env.Contains(key)) return null;
-		var raw = env[key]?.ToString();
-		return string.IsNullOrEmpty(raw) ? null : raw;
-	}
+    static string? EnvOrNull(IDictionary env, string key)
+    {
+        if (!env.Contains(key)) return null;
+        var raw = env[key]?.ToString();
+        return string.IsNullOrEmpty(raw) ? null : raw;
+    }
 }

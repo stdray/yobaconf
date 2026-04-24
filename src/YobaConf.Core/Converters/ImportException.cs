@@ -6,6 +6,6 @@ namespace YobaConf.Core.Converters;
 // etc.) to keep the public surface stable if we ever swap parser libraries.
 public sealed class ImportException : Exception
 {
-	public ImportException(string message) : base(message) { }
-	public ImportException(string message, Exception inner) : base(message, inner) { }
+    public ImportException(string message) : base(message) { }
+    public ImportException(string message, Exception inner) : base(message, inner) { }
 }

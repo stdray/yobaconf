@@ -12,23 +12,23 @@ namespace YobaConf.Core.Converters;
 // guess at the user's intent for those.
 public static class JsonToHoconConverter
 {
-	static readonly JsonSerializerOptions PrettyOptions = new()
-	{
-		WriteIndented = true,
-		IndentSize = 2,
-	};
+    static readonly JsonSerializerOptions PrettyOptions = new()
+    {
+        WriteIndented = true,
+        IndentSize = 2,
+    };
 
-	public static string Convert(string jsonText)
-	{
-		ArgumentNullException.ThrowIfNull(jsonText);
-		try
-		{
-			using var doc = JsonDocument.Parse(jsonText);
-			return JsonSerializer.Serialize(doc.RootElement, PrettyOptions);
-		}
-		catch (JsonException ex)
-		{
-			throw new ImportException($"Invalid JSON: {ex.Message}", ex);
-		}
-	}
+    public static string Convert(string jsonText)
+    {
+        ArgumentNullException.ThrowIfNull(jsonText);
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonText);
+            return JsonSerializer.Serialize(doc.RootElement, PrettyOptions);
+        }
+        catch (JsonException ex)
+        {
+            throw new ImportException($"Invalid JSON: {ex.Message}", ex);
+        }
+    }
 }

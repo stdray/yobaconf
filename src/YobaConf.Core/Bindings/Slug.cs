@@ -12,34 +12,34 @@ namespace YobaConf.Core.Bindings;
 // into JSON. Tag-keys and tag-values don't get dots.
 public static partial class Slug
 {
-	[GeneratedRegex(@"^\$?[a-z][a-z0-9-]{0,39}$", RegexOptions.CultureInvariant)]
-	public static partial Regex Pattern { get; }
+    [GeneratedRegex(@"^\$?[a-z][a-z0-9-]{0,39}$", RegexOptions.CultureInvariant)]
+    public static partial Regex Pattern { get; }
 
-	public static bool IsValid(string? s) => s is not null && Pattern.IsMatch(s);
+    public static bool IsValid(string? s) => s is not null && Pattern.IsMatch(s);
 
-	public static void Require(string? s, string fieldName)
-	{
-		ArgumentNullException.ThrowIfNull(s);
-		if (!Pattern.IsMatch(s))
-			throw new ArgumentException(
-				$"{fieldName} '{s}' is not a valid slug — expected lowercase letter followed by up to 39 " +
-				$"lowercase-alnum-or-dash characters (optional leading '$' for system names).",
-				fieldName);
-	}
+    public static void Require(string? s, string fieldName)
+    {
+        ArgumentNullException.ThrowIfNull(s);
+        if (!Pattern.IsMatch(s))
+            throw new ArgumentException(
+                $"{fieldName} '{s}' is not a valid slug — expected lowercase letter followed by up to 39 " +
+                $"lowercase-alnum-or-dash characters (optional leading '$' for system names).",
+                fieldName);
+    }
 
-	// KeyPath: dotted form ("db.host", "cache.policy.lru"). Every segment is a slug.
-	// Empty string is rejected, as are leading/trailing/double dots.
-	public static void RequireKeyPath(string? keyPath)
-	{
-		ArgumentNullException.ThrowIfNull(keyPath);
-		if (keyPath.Length == 0)
-			throw new ArgumentException("KeyPath cannot be empty.", nameof(keyPath));
+    // KeyPath: dotted form ("db.host", "cache.policy.lru"). Every segment is a slug.
+    // Empty string is rejected, as are leading/trailing/double dots.
+    public static void RequireKeyPath(string? keyPath)
+    {
+        ArgumentNullException.ThrowIfNull(keyPath);
+        if (keyPath.Length == 0)
+            throw new ArgumentException("KeyPath cannot be empty.", nameof(keyPath));
 
-		foreach (var segment in keyPath.Split('.'))
-			if (!Pattern.IsMatch(segment))
-				throw new ArgumentException(
-					$"KeyPath '{keyPath}' contains invalid segment '{segment}'. " +
-					"Each dot-separated segment must match [a-z][a-z0-9-]{0,39} (optional leading '$').",
-					nameof(keyPath));
-	}
+        foreach (var segment in keyPath.Split('.'))
+            if (!Pattern.IsMatch(segment))
+                throw new ArgumentException(
+                    $"KeyPath '{keyPath}' contains invalid segment '{segment}'. " +
+                    "Each dot-separated segment must match [a-z][a-z0-9-]{0,39} (optional leading '$').",
+                    nameof(keyPath));
+    }
 }
