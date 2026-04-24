@@ -34,6 +34,13 @@
 	<main class="mx-auto max-w-6xl px-4 py-6">
 		@RenderBody()
 	</main>
+	<footer class="mx-auto max-w-6xl px-4 py-4">
+		<div class="text-center text-xs opacity-60" data-testid="footer-version">
+			v@(Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev")
+			· @(Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local")
+			· built @(Environment.GetEnvironmentVariable("GIT_COMMIT_DATE") ?? "dev")
+		</div>
+	</footer>
 	@await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
