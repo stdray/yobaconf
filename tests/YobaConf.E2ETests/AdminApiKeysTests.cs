@@ -62,6 +62,37 @@ public sealed class AdminApiKeysTests(WebAppFixture app, ITestOutputHelper outpu
     }
 
     [Fact]
+    public async Task Copy_Button_Clips_Plaintext_Token_To_Clipboard()
+    {
+        await _page!.GotoAsync("/admin/api-keys");
+
+        var desc = "e2e-copy-" + Guid.NewGuid().ToString("N")[..6];
+        await _page.GetByTestId("api-keys-create-description").FillAsync(desc);
+        await _page.GetByTestId("api-keys-create-required-tags").FillAsync("env=prod");
+        await _page.GetByTestId("api-keys-create-submit").ClickAsync();
+
+        // Plaintext shown.
+        var plaintextEl = _page.GetByTestId("api-keys-plaintext");
+        await Expect(plaintextEl).ToBeVisibleAsync();
+        var plaintext = (await plaintextEl.TextContentAsync())?.Trim() ?? "";
+
+        // Click Copy button.
+        await _page.GetByTestId("api-keys-copy-token").ClickAsync();
+
+        // Button should show "Copied" (within the 2s window).
+        await Expect(_page.GetByTestId("api-keys-copy-token")).ToHaveTextAsync("Copied");
+
+        // Playwright reads clipboard via evaluate.
+        var clipboardContent = await _page.EvaluateAsync<string>(
+            "() => navigator.clipboard.readText()");
+        clipboardContent.Should().Be(plaintext);
+
+        // After 2s, button returns to "Copy".
+        await Task.Delay(2200);
+        await Expect(_page.GetByTestId("api-keys-copy-token")).ToHaveTextAsync("Copy");
+    }
+
+    [Fact]
     public async Task Invalid_Required_Tags_Are_Rejected_With_Error()
     {
         await _page!.GotoAsync("/admin/api-keys");

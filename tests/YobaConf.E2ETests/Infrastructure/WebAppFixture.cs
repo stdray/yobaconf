@@ -12,6 +12,7 @@ public sealed class WebAppFixture : IAsyncLifetime
 {
     public const string AdminUsername = "admin";
     public const string AdminPassword = "test-pass";
+    static readonly string[] ClipboardPermissions = { "clipboard-read", "clipboard-write" };
 
     readonly KestrelAppHost _host = new();
     IPlaywright? _playwright;
@@ -94,6 +95,8 @@ public sealed class WebAppFixture : IAsyncLifetime
             ContentType = "application/javascript",
             Body = "/* stubbed CDN fetch */",
         }));
+        // Clipboard permission for tests that exercise navigator.clipboard.
+        await seedCtx.GrantPermissionsAsync(ClipboardPermissions);
 
         var seedPage = await seedCtx.NewPageAsync();
         await seedPage.GotoAsync("/Login");
@@ -116,6 +119,9 @@ public sealed class WebAppFixture : IAsyncLifetime
             IgnoreHTTPSErrors = true,
             StorageStatePath = authenticated && !string.IsNullOrEmpty(_storageStatePath) ? _storageStatePath : null,
         });
+
+        // navigator.clipboard.writeText requires a secure context + clipboard permission.
+        await ctx.GrantPermissionsAsync(ClipboardPermissions);
 
         // _Layout.cshtml pulls htmx + prism from unpkg — blocking fetches. Headless Chromium
         // stalls 15-30s trying the CDN. Stub with an empty 200 so the DOM parser unblocks; no

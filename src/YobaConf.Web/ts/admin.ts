@@ -4,5 +4,6 @@
 // (binding editor htmx handlers, tag autocomplete, facet-filter sugar).
 
 import "./bindings-reveal";
+import "./copy-token";
 
 export const version = "0.0.0" as const;

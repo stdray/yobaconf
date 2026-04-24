@@ -19,7 +19,11 @@
 	<div class="alert alert-warning mb-3" data-testid="api-keys-plaintext-alert">
 		<div class="flex flex-col gap-2 w-full">
 			<span><strong>Save this token now — it will not be shown again.</strong></span>
-			<code class="font-mono text-sm break-all" data-testid="api-keys-plaintext">@Model.NewlyCreatedToken</code>
+			<div class="flex items-start gap-2">
+				<code class="font-mono text-sm break-all flex-1" data-testid="api-keys-plaintext">@Model.NewlyCreatedToken</code>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="api-keys-copy-token" data-token="@Model.NewlyCreatedToken" aria-label="Copy token">Copy</button>
+			</div>
+			<span class="text-xs opacity-0" data-testid="api-keys-copy-feedback" aria-live="polite"></span>
 		</div>
 	</div>
 }
