@@ -84,9 +84,13 @@ public sealed class SchemaMigrationTests
 		// v1 tables must be gone; v2 Bindings must be usable.
 		store.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.Empty, KeyPath = "k",
-			Kind = BindingKind.Plain, ValuePlain = "\"v\"",
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+			Id = 0,
+			TagSet = TagSet.Empty,
+			KeyPath = "k",
+			Kind = BindingKind.Plain,
+			ValuePlain = "\"v\"",
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UnixEpoch,
 		});
 		store.ListActive().Should().ContainSingle();
 	}
@@ -103,9 +107,13 @@ public sealed class SchemaMigrationTests
 		var first = new SqliteBindingStore(Opts(tmp));
 		first.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.Empty, KeyPath = "k",
-			Kind = BindingKind.Plain, ValuePlain = "\"v\"",
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+			Id = 0,
+			TagSet = TagSet.Empty,
+			KeyPath = "k",
+			Kind = BindingKind.Plain,
+			ValuePlain = "\"v\"",
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UnixEpoch,
 		}, actor: "alice");
 		var auditFirst = new SqliteAuditLogStore(Opts(tmp));
 		auditFirst.ListRecent(10).Should().ContainSingle();
@@ -125,9 +133,13 @@ public sealed class SchemaMigrationTests
 		store.ListActive().Should().BeEmpty();
 		store.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.Empty, KeyPath = "k",
-			Kind = BindingKind.Plain, ValuePlain = "\"v\"",
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+			Id = 0,
+			TagSet = TagSet.Empty,
+			KeyPath = "k",
+			Kind = BindingKind.Plain,
+			ValuePlain = "\"v\"",
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UnixEpoch,
 		});
 		store.ListActive().Should().ContainSingle();
 	}

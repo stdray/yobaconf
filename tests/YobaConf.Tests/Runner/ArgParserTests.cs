@@ -32,7 +32,8 @@ public sealed class ArgParserTests
 		ok.Template.Should().Be("dotnet");
 		ok.Tags.Should().BeEquivalentTo(new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub",
+			["env"] = "prod",
+			["project"] = "yobapub",
 		});
 		ok.ChildArgs.Should().Equal(["dotnet", "MyApp.dll", "--flag"]);
 	}

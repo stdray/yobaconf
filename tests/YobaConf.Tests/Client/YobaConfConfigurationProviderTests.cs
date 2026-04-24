@@ -49,8 +49,13 @@ public sealed class YobaConfConfigurationProviderTests : IDisposable
 
 	static Binding Plain(TagSet t, string k, string v) => new()
 	{
-		Id = 0, TagSet = t, KeyPath = k, Kind = BindingKind.Plain,
-		ValuePlain = v, ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+		Id = 0,
+		TagSet = t,
+		KeyPath = k,
+		Kind = BindingKind.Plain,
+		ValuePlain = v,
+		ContentHash = string.Empty,
+		UpdatedAt = DateTimeOffset.UnixEpoch,
 	};
 
 	IConfigurationRoot BuildConfig(Action<YobaConfConfigurationOptions> configure)

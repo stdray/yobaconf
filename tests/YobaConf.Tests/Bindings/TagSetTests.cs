@@ -49,7 +49,9 @@ public sealed class TagSetTests
 		var self = TagSet.From([new("env", "prod"), new("project", "yobapub")]);
 		var superset = new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub", ["region"] = "eu-west",
+			["env"] = "prod",
+			["project"] = "yobapub",
+			["region"] = "eu-west",
 		};
 		self.IsSubsetOf(superset).Should().BeTrue();
 	}

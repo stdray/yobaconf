@@ -50,8 +50,13 @@ public sealed class ConfEndpointTests : IDisposable
 
 	static Binding Plain(TagSet t, string keyPath, string valueJson) => new()
 	{
-		Id = 0, TagSet = t, KeyPath = keyPath, Kind = BindingKind.Plain,
-		ValuePlain = valueJson, ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+		Id = 0,
+		TagSet = t,
+		KeyPath = keyPath,
+		Kind = BindingKind.Plain,
+		ValuePlain = valueJson,
+		ContentHash = string.Empty,
+		UpdatedAt = DateTimeOffset.UnixEpoch,
 	};
 
 	[Fact]

@@ -161,7 +161,9 @@ public sealed class SqliteBindingStoreTests
 
 		var vector = new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub", ["region"] = "eu-west",
+			["env"] = "prod",
+			["project"] = "yobapub",
+			["region"] = "eu-west",
 		};
 		var matched = store.FindMatching(vector);
 

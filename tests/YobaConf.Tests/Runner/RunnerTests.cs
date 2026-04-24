@@ -66,8 +66,13 @@ public sealed class RunnerTests : IDisposable
 
 	static Binding Plain(TagSet t, string k, string v) => new()
 	{
-		Id = 0, TagSet = t, KeyPath = k, Kind = BindingKind.Plain,
-		ValuePlain = v, ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+		Id = 0,
+		TagSet = t,
+		KeyPath = k,
+		Kind = BindingKind.Plain,
+		ValuePlain = v,
+		ContentHash = string.Empty,
+		UpdatedAt = DateTimeOffset.UnixEpoch,
 	};
 
 	[Fact]

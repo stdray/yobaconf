@@ -34,8 +34,13 @@ public sealed class HistoryTests(WebAppFixture app, ITestOutputHelper output) : 
 
 	static Binding Plain(TagSet t, string k, string v) => new()
 	{
-		Id = 0, TagSet = t, KeyPath = k, Kind = BindingKind.Plain,
-		ValuePlain = v, ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UtcNow,
+		Id = 0,
+		TagSet = t,
+		KeyPath = k,
+		Kind = BindingKind.Plain,
+		ValuePlain = v,
+		ContentHash = string.Empty,
+		UpdatedAt = DateTimeOffset.UtcNow,
 	};
 
 	static string FreshActor() => "actor-" + Guid.NewGuid().ToString("N")[..8];
@@ -100,21 +105,31 @@ public sealed class HistoryTests(WebAppFixture app, ITestOutputHelper output) : 
 		var originalBundle = enc.Encrypt("original-pass");
 		app.BindingAdmin.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.Empty, KeyPath = "db.password",
+			Id = 0,
+			TagSet = TagSet.Empty,
+			KeyPath = "db.password",
 			Kind = BindingKind.Secret,
-			Ciphertext = originalBundle.Ciphertext, Iv = originalBundle.Iv,
-			AuthTag = originalBundle.AuthTag, KeyVersion = originalBundle.KeyVersion,
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UtcNow,
+			Ciphertext = originalBundle.Ciphertext,
+			Iv = originalBundle.Iv,
+			AuthTag = originalBundle.AuthTag,
+			KeyVersion = originalBundle.KeyVersion,
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UtcNow,
 		}, "alice");
 
 		var newBundle = enc.Encrypt("rotated-pass");
 		app.BindingAdmin.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.Empty, KeyPath = "db.password",
+			Id = 0,
+			TagSet = TagSet.Empty,
+			KeyPath = "db.password",
 			Kind = BindingKind.Secret,
-			Ciphertext = newBundle.Ciphertext, Iv = newBundle.Iv,
-			AuthTag = newBundle.AuthTag, KeyVersion = newBundle.KeyVersion,
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UtcNow,
+			Ciphertext = newBundle.Ciphertext,
+			Iv = newBundle.Iv,
+			AuthTag = newBundle.AuthTag,
+			KeyVersion = newBundle.KeyVersion,
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UtcNow,
 		}, "alice");
 
 		await _page!.GotoAsync("/History?entity=Binding&key=db.password");

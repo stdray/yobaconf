@@ -59,7 +59,8 @@ public sealed class ResolvePipelineTests
 
 		var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub",
+			["env"] = "prod",
+			["project"] = "yobapub",
 		});
 
 		outcome.Should().BeOfType<ResolveSuccess>()
@@ -79,7 +80,8 @@ public sealed class ResolvePipelineTests
 
 		var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub",
+			["env"] = "prod",
+			["project"] = "yobapub",
 		});
 
 		outcome.Should().BeOfType<ResolveSuccess>()
@@ -96,7 +98,8 @@ public sealed class ResolvePipelineTests
 
 		var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub",
+			["env"] = "prod",
+			["project"] = "yobapub",
 		});
 
 		var conflict = outcome.Should().BeOfType<ResolveConflict>().Subject;
@@ -145,7 +148,10 @@ public sealed class ResolvePipelineTests
 			TagSet = TagSet.Empty,
 			KeyPath = "k",
 			Kind = BindingKind.Secret,
-			Ciphertext = [1, 2, 3], Iv = new byte[12], AuthTag = new byte[16], KeyVersion = "v1",
+			Ciphertext = [1, 2, 3],
+			Iv = new byte[12],
+			AuthTag = new byte[16],
+			KeyVersion = "v1",
 			ContentHash = string.Empty,
 			UpdatedAt = DateTimeOffset.UnixEpoch,
 		});
@@ -242,22 +248,35 @@ public sealed class ResolvePipelineTests
 
 		store.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.From([new("env", "prod")]), KeyPath = "k",
+			Id = 0,
+			TagSet = TagSet.From([new("env", "prod")]),
+			KeyPath = "k",
 			Kind = BindingKind.Secret,
-			Ciphertext = bundleA.Ciphertext, Iv = bundleA.Iv, AuthTag = bundleA.AuthTag, KeyVersion = bundleA.KeyVersion,
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+			Ciphertext = bundleA.Ciphertext,
+			Iv = bundleA.Iv,
+			AuthTag = bundleA.AuthTag,
+			KeyVersion = bundleA.KeyVersion,
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UnixEpoch,
 		});
 		store.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.From([new("project", "yobapub")]), KeyPath = "k",
+			Id = 0,
+			TagSet = TagSet.From([new("project", "yobapub")]),
+			KeyPath = "k",
 			Kind = BindingKind.Secret,
-			Ciphertext = bundleB.Ciphertext, Iv = bundleB.Iv, AuthTag = bundleB.AuthTag, KeyVersion = bundleB.KeyVersion,
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+			Ciphertext = bundleB.Ciphertext,
+			Iv = bundleB.Iv,
+			AuthTag = bundleB.AuthTag,
+			KeyVersion = bundleB.KeyVersion,
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UnixEpoch,
 		});
 
 		var outcome = new ResolvePipeline(store, enc).Resolve(new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub",
+			["env"] = "prod",
+			["project"] = "yobapub",
 		});
 
 		var conflict = outcome.Should().BeOfType<ResolveConflict>().Subject;

@@ -8,8 +8,13 @@ public sealed class ResponseTemplateTests
 {
 	static Binding Plain(TagSet t, string k, string v, Dictionary<string, string>? aliases = null) => new()
 	{
-		Id = 0, TagSet = t, KeyPath = k, Kind = BindingKind.Plain,
-		ValuePlain = v, ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+		Id = 0,
+		TagSet = t,
+		KeyPath = k,
+		Kind = BindingKind.Plain,
+		ValuePlain = v,
+		ContentHash = string.Empty,
+		UpdatedAt = DateTimeOffset.UnixEpoch,
 		Aliases = aliases,
 	};
 

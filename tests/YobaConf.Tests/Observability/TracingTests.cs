@@ -41,8 +41,13 @@ public sealed class TracingTests : IDisposable
 
 	static Binding Plain(TagSet t, string k, string v) => new()
 	{
-		Id = 0, TagSet = t, KeyPath = k, Kind = BindingKind.Plain,
-		ValuePlain = v, ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UnixEpoch,
+		Id = 0,
+		TagSet = t,
+		KeyPath = k,
+		Kind = BindingKind.Plain,
+		ValuePlain = v,
+		ContentHash = string.Empty,
+		UpdatedAt = DateTimeOffset.UnixEpoch,
 	};
 
 	IReadOnlyList<Activity> SpansForProbe(string probeTraceId) =>
@@ -78,7 +83,8 @@ public sealed class TracingTests : IDisposable
 		using var probe = ProbeSource.StartActivity("probe");
 		new ResolvePipeline(store).Resolve(new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub",
+			["env"] = "prod",
+			["project"] = "yobapub",
 		});
 		var traceId = probe!.TraceId.ToString();
 		probe.Dispose();
@@ -99,7 +105,8 @@ public sealed class TracingTests : IDisposable
 		using var probe = ProbeSource.StartActivity("probe");
 		new ResolvePipeline(store).Resolve(new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub",
+			["env"] = "prod",
+			["project"] = "yobapub",
 		});
 		var traceId = probe!.TraceId.ToString();
 		probe.Dispose();

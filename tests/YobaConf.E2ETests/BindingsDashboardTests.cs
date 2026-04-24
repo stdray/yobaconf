@@ -32,8 +32,13 @@ public sealed class BindingsDashboardTests(WebAppFixture app, ITestOutputHelper 
 
 	static Binding Plain(TagSet t, string k, string v) => new()
 	{
-		Id = 0, TagSet = t, KeyPath = k, Kind = BindingKind.Plain,
-		ValuePlain = v, ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UtcNow,
+		Id = 0,
+		TagSet = t,
+		KeyPath = k,
+		Kind = BindingKind.Plain,
+		ValuePlain = v,
+		ContentHash = string.Empty,
+		UpdatedAt = DateTimeOffset.UtcNow,
 	};
 
 	[Fact]
@@ -79,10 +84,16 @@ public sealed class BindingsDashboardTests(WebAppFixture app, ITestOutputHelper 
 		var bundle = enc.Encrypt("s3cr3t-p4ss");
 		var outcome = app.BindingAdmin.Upsert(new Binding
 		{
-			Id = 0, TagSet = TagSet.From([new("env", "prod")]), KeyPath = "db.password",
+			Id = 0,
+			TagSet = TagSet.From([new("env", "prod")]),
+			KeyPath = "db.password",
 			Kind = BindingKind.Secret,
-			Ciphertext = bundle.Ciphertext, Iv = bundle.Iv, AuthTag = bundle.AuthTag, KeyVersion = bundle.KeyVersion,
-			ContentHash = string.Empty, UpdatedAt = DateTimeOffset.UtcNow,
+			Ciphertext = bundle.Ciphertext,
+			Iv = bundle.Iv,
+			AuthTag = bundle.AuthTag,
+			KeyVersion = bundle.KeyVersion,
+			ContentHash = string.Empty,
+			UpdatedAt = DateTimeOffset.UtcNow,
 		});
 
 		await _page!.GotoAsync("/Bindings");

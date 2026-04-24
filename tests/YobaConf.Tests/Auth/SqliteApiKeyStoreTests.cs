@@ -83,7 +83,9 @@ public sealed class SqliteApiKeyStoreTests
 		var valid = (ApiKeyValidation.Valid)store.Validate(created.Plaintext);
 		IApiKeyStore.CheckScope(valid.Key, new Dictionary<string, string>
 		{
-			["env"] = "prod", ["project"] = "yobapub", ["region"] = "eu-west",
+			["env"] = "prod",
+			["project"] = "yobapub",
+			["region"] = "eu-west",
 		}).Should().BeNull();
 	}
 
