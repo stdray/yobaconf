@@ -94,6 +94,9 @@ public static class YobaConfApp
         // deterministic UpdatedAt values on upsert.
         builder.Services.AddSingleton(TimeProvider.System);
 
+        // Transient secret-reveal cache (E.3). 10s TTL on the per-user cache entry.
+        builder.Services.AddMemoryCache();
+
         // Persist DataProtection keys across container restarts. Without this, every redeploy
         // regenerates the in-memory master key and invalidates prior auth-cookies / antiforgery
         // tokens — users get logged out on every deploy. Config-driven: empty

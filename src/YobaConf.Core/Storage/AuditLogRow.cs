@@ -3,7 +3,7 @@ using LinqToDB.Mapping;
 namespace YobaConf.Core.Storage;
 
 [Table("AuditLog")]
-sealed class AuditLogRow
+public sealed class AuditLogRow
 {
     [Column, PrimaryKey, Identity] public long Id { get; set; }
     [Column] public long At { get; set; }

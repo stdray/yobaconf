@@ -64,6 +64,14 @@ public sealed class SqliteAuditLogStore : IAuditLogStore
         return [.. q.OrderByDescending(r => r.At).ThenByDescending(r => r.Id).Take(limit).ToArray().Select(ToDomain)];
     }
 
+    // Public append for non-storage audit writes (E.3 secret reveal). Opens its own
+    // connection — no transaction wrapping needed for the audit-only write.
+    public void Append(AuditLogRow row)
+    {
+        using var db = Open();
+        Append(db, row);
+    }
+
     public AuditLogEntry? FindById(long id)
     {
         using var activity = ActivitySources.StorageSqlite.StartActivity("sqlite.find-audit");

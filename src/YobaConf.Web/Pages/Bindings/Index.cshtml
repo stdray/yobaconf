@@ -1,5 +1,9 @@
 @page "/Bindings"
 @model YobaConf.Web.Pages.Bindings.IndexModel
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery antiforgery
+@{
+	var tokens = antiforgery.GetAndStoreTokens(ViewContext.HttpContext);
+}
 @{
 	ViewData["Title"] = "Bindings";
 }
@@ -19,6 +23,8 @@
 }
 
 <form method="get" class="mb-4 flex flex-wrap items-end gap-2" data-testid="bindings-filter-form">
+	<input type="hidden" id="__requestVerificationToken" value="@tokens.RequestToken" />
+
 	<label class="form-control">
 		<span class="label-text">Key path</span>
 		<input type="text" name="q" value="@Model.KeyQuery"
@@ -66,7 +72,6 @@ else
 			<tbody>
 				@foreach (var r in Model.Rows)
 				{
-					var isRevealed = Model.RevealedId == r.Binding.Id;
 					<tr data-testid="bindings-row" data-binding-id="@r.Binding.Id">
 						<td class="font-mono text-xs" data-testid="bindings-tagset">
 							@foreach (var kv in r.Binding.TagSet)
@@ -82,17 +87,10 @@ else
 						<td class="font-mono text-xs" data-testid="bindings-value">
 							@if (r.Binding.Kind == BindingKind.Secret)
 							{
-								if (isRevealed)
-								{
-									<span class="bg-warning/10 rounded px-1" data-testid="bindings-secret-revealed">@r.RevealedValue</span>
-								}
-								else
-								{
-									<span data-testid="bindings-secret-masked">••••••</span>
-									<a asp-page="/Bindings/Index" asp-route-revealId="@r.Binding.Id"
-										asp-route-q="@Model.KeyQuery" class="btn btn-xs btn-ghost ml-2"
-										data-testid="bindings-secret-reveal" title="Reveal for 10s">👁</a>
-								}
+								<span class="font-mono text-xs" data-testid="bindings-secret-masked" data-binding-id="@r.Binding.Id">&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;</span>
+								<button type="button" class="btn btn-xs btn-ghost ml-2"
+									data-testid="bindings-secret-reveal" data-binding-id="@r.Binding.Id"
+									title="Reveal for 10s">&#128065;</button>
 							}
 							else
 							{
@@ -110,4 +108,3 @@ else
 		</table>
 	</div>
 }
-@* Auto-hide JS lives in src/YobaConf.Web/ts/bindings-reveal-auto-hide.ts (loaded via admin.js bundle). *@

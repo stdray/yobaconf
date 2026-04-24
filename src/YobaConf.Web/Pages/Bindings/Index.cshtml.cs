@@ -1,6 +1,10 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Caching.Memory;
+using YobaConf.Core.Audit;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Security;
+using YobaConf.Core.Storage;
 
 namespace YobaConf.Web.Pages.Bindings;
 
@@ -8,11 +12,19 @@ public sealed class IndexModel : PageModel
 {
     readonly IBindingStore _store;
     readonly ISecretEncryptor? _encryptor;
+    readonly IAuditLogStore _audit;
+    readonly IMemoryCache _cache;
 
-    public IndexModel(IBindingStore store, ISecretEncryptor? encryptor = null)
+    public IndexModel(
+        IBindingStore store,
+        ISecretEncryptor? encryptor = null,
+        IAuditLogStore audit = null!,
+        IMemoryCache cache = null!)
     {
         _store = store;
         _encryptor = encryptor;
+        _audit = audit;
+        _cache = cache;
     }
 
     public string? KeyQuery { get; private set; }
@@ -24,20 +36,15 @@ public sealed class IndexModel : PageModel
         new Dictionary<string, IReadOnlyList<string>>();
 
     public IReadOnlyList<Row> Rows { get; private set; } = [];
-    public long? RevealedId { get; private set; }
     public string? ErrorMessage { get; set; }
     public string? SuccessMessage { get; set; }
 
-    public sealed record Row(Binding Binding, string? RevealedValue);
+    public sealed record Row(Binding Binding);
 
-    public void OnGet(string? q, long? revealId)
+    public void OnGet(string? q)
     {
         KeyQuery = string.IsNullOrWhiteSpace(q) ? null : q.Trim();
-        RevealedId = revealId;
 
-        // Pull every active binding so we can build facet dropdowns from actually-used tag
-        // keys+values without a separate DISTINCT query. Pet-scale (≤200 rows) makes the full
-        // fetch fine.
         var all = _store.ListActive();
 
         var facetKeys = new SortedSet<string>(StringComparer.Ordinal);
@@ -56,7 +63,6 @@ public sealed class IndexModel : PageModel
         FacetKeys = [.. facetKeys];
         FacetValues = facetKeys.ToDictionary(k => k, k => (IReadOnlyList<string>)[.. facetValues[k]]);
 
-        // Collect tag filters from query-string `t.<key>=<value>`.
         var filter = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var kv in Request.Query)
         {
@@ -69,25 +75,46 @@ public sealed class IndexModel : PageModel
         TagFilter = filter;
 
         var matching = all.Where(b => MatchesTagFilter(b, filter) && MatchesKeyQuery(b, KeyQuery));
+        Rows = [.. matching.Select(b => new Row(b))];
+    }
 
-        var rows = new List<Row>();
-        foreach (var b in matching)
+    public IActionResult OnPostReveal(long id)
+    {
+        var binding = _store.FindById(id);
+        if (binding is null) return NotFound();
+        if (binding.Kind != BindingKind.Secret) return BadRequest();
+        if (_encryptor is null) return StatusCode(500);
+
+        var userName = User?.Identity?.Name ?? "system";
+        var cacheKey = "reveal-" + id + "-" + userName;
+
+        string? plaintext;
+        if (!_cache.TryGetValue(cacheKey, out plaintext))
         {
-            string? revealed = null;
-            if (b.Kind == BindingKind.Secret && revealId == b.Id && _encryptor is not null)
+            try
             {
-                try
-                {
-                    revealed = _encryptor.Decrypt(b.Ciphertext!, b.Iv!, b.AuthTag!, b.KeyVersion!);
-                }
-                catch
-                {
-                    revealed = "<decrypt-failed>";
-                }
+                plaintext = _encryptor.Decrypt(binding.Ciphertext!, binding.Iv!, binding.AuthTag!, binding.KeyVersion!);
+                _cache.Set(cacheKey, plaintext, TimeSpan.FromSeconds(10));
             }
-            rows.Add(new Row(b, revealed));
+            catch
+            {
+                return StatusCode(500);
+            }
         }
-        Rows = rows;
+
+        // Always audit — cache optimizes CPU, not audit semantics.
+        _audit.Append(new AuditLogRow
+        {
+            Actor = userName,
+            Action = AuditAction.Revealed.ToString(),
+            EntityType = AuditEntityType.Binding.ToString(),
+            TagSetJson = binding.TagSet.CanonicalJson,
+            KeyPath = binding.KeyPath,
+            OldValue = null,
+            NewValue = null,
+        });
+
+        return new JsonResult(new { plaintext });
     }
 
     static bool MatchesTagFilter(Binding b, IReadOnlyDictionary<string, string> filter)
@@ -101,7 +128,6 @@ public sealed class IndexModel : PageModel
     static bool MatchesKeyQuery(Binding b, string? q)
     {
         if (string.IsNullOrEmpty(q)) return true;
-        // Glob `*` at the end = prefix match; otherwise substring.
         if (q.EndsWith('*'))
             return b.KeyPath.StartsWith(q[..^1], StringComparison.Ordinal);
         return b.KeyPath.Contains(q, StringComparison.Ordinal);

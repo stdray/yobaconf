@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using YobaConf.Core.Audit;
 using YobaConf.Core.Bindings;
 using YobaConf.Core.Security;
 using YobaConf.E2ETests.Infrastructure;
@@ -107,5 +108,77 @@ public sealed class BindingsDashboardTests(WebAppFixture app, ITestOutputHelper 
         // the full 10s in the test — the server-rendered state is covered; the JS path is
         // asserted shallowly by the presence of the data-testid.
         outcome.Binding.Kind.Should().Be(BindingKind.Secret);
+    }
+
+    [Fact]
+    public async Task Reveal_Shows_Plaintext_Via_POST()
+    {
+        var enc = app.Services.GetRequiredService<ISecretEncryptor>();
+        var bundle = enc.Encrypt("s3cr3t-p4ss");
+        app.BindingAdmin.Upsert(new Binding
+        {
+            Id = 0,
+            TagSet = TagSet.From([new("env", "prod")]),
+            KeyPath = "db.password",
+            Kind = BindingKind.Secret,
+            Ciphertext = bundle.Ciphertext,
+            Iv = bundle.Iv,
+            AuthTag = bundle.AuthTag,
+            KeyVersion = bundle.KeyVersion,
+            ContentHash = string.Empty,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        });
+
+        await _page!.GotoAsync("/Bindings");
+
+        // Initially masked.
+        await Expect(_page.GetByTestId("bindings-secret-masked")).ToBeVisibleAsync();
+
+        // Click reveal — POST triggers server-side decrypt + audit.
+        await _page.GetByTestId("bindings-secret-reveal").ClickAsync();
+
+        // Plaintext shown in the revealed span.
+        await Expect(_page.GetByTestId("bindings-secret-revealed"))
+            .ToHaveTextAsync("s3cr3t-p4ss");
+
+        // Audit log has one Revealed entry for this binding.
+        var audit = app.Services.GetRequiredService<IAuditLogStore>();
+        var rows = audit.Query(AuditEntityType.Binding, null, "db.password", 100);
+        var revealed = rows.FirstOrDefault(r => r.Action == AuditAction.Revealed);
+        revealed.Should().NotBeNull();
+        revealed!.KeyPath.Should().Be("db.password");
+    }
+
+    [Fact]
+    public async Task Reveal_Remasks_After_Window()
+    {
+        var enc = app.Services.GetRequiredService<ISecretEncryptor>();
+        var bundle = enc.Encrypt("s3cr3t-p4ss");
+        app.BindingAdmin.Upsert(new Binding
+        {
+            Id = 0,
+            TagSet = TagSet.From([new("env", "staging")]),
+            KeyPath = "cache.key",
+            Kind = BindingKind.Secret,
+            Ciphertext = bundle.Ciphertext,
+            Iv = bundle.Iv,
+            AuthTag = bundle.AuthTag,
+            KeyVersion = bundle.KeyVersion,
+            ContentHash = string.Empty,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        });
+
+        await _page!.GotoAsync("/Bindings");
+
+        await _page.GetByTestId("bindings-secret-reveal").ClickAsync();
+        await Expect(_page.GetByTestId("bindings-secret-revealed"))
+            .ToHaveTextAsync("s3cr3t-p4ss");
+
+        // Wait for the 10s auto-mask window to elapse.
+        await Task.Delay(10_500);
+
+        // After 10s the span should be masked again.
+        await Expect(_page.GetByTestId("bindings-secret-masked"))
+            .ToHaveTextAsync("\u2022\u2022\u2022\u2022\u2022\u2022");
     }
 }

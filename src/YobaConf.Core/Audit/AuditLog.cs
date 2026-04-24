@@ -30,6 +30,7 @@ public enum AuditAction
     Updated,
     Deleted,
     Restored,
+    Revealed,
 }
 
 public enum AuditEntityType
@@ -49,4 +50,8 @@ public interface IAuditLogStore
     IReadOnlyList<AuditLogEntry> Query(AuditEntityType? entityType, string? actor, string? keyPathSubstring, int limit);
 
     AuditLogEntry? FindById(long id);
+
+    // Non-storage audit writes (e.g. secret reveal from a page handler). Storage impls
+    // still write their own entries via SqliteAuditLogStore.Append(DataConnection, …).
+    void Append(Storage.AuditLogRow row);
 }
