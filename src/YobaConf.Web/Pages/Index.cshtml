@@ -4,14 +4,19 @@
 	ViewData["Title"] = "YobaConf";
 }
 
-@* v2 skeleton placeholder — real dashboard lands in Phase B.4 (/Bindings). Shown
-   post-login so the cookie-redirect target has something to render. *@
-<div class="alert" data-testid="index-phase-a-placeholder">
-	<div>
-		<h2 class="text-lg font-semibold">YobaConf v2 — Phase A (skeleton)</h2>
-		<p class="opacity-70 text-sm mt-1">
-			Storage and resolve engine are being rebuilt. Admin UI lands in Phase B —
-			see <code class="font-mono">doc/plan.md</code>.
-		</p>
+<div class="max-w-2xl mx-auto mt-8" data-testid="index-home">
+	<h1 class="text-2xl font-bold" data-testid="index-title">YobaConf</h1>
+	<p class="mt-2 text-base opacity-70">
+		Tag-scoped configuration store. Bindings live single-file in SQLite and
+		resolve per request by subset-matching a caller-supplied tag-vector — no
+		hierarchy, no ancestor-merge. API keys carry required-tags + key-prefix
+		scope.
+	</p>
+	<div class="mt-6 flex flex-wrap gap-2">
+		<a asp-page="/Bindings/Index" class="btn btn-sm" data-testid="home-bindings">Bindings</a>
+		<a asp-page="/Admin/Users" class="btn btn-sm" data-testid="home-users">Users</a>
+		<a asp-page="/Admin/ApiKeys" class="btn btn-sm" data-testid="home-api-keys">API Keys</a>
+		<a asp-page="/History" class="btn btn-sm" data-testid="home-history">History</a>
+		<a asp-page="/Tags" class="btn btn-sm" data-testid="home-tags">Tags</a>
 	</div>
 </div>

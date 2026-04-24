@@ -47,7 +47,7 @@ public sealed class LoginTests(WebAppFixture app, ITestOutputHelper output) : IA
         await login.GotoAsync();
         await login.SubmitAsync(WebAppFixture.AdminUsername, WebAppFixture.AdminPassword);
 
-        await Expect(_page!.GetByTestId("index-phase-a-placeholder")).ToBeVisibleAsync();
+        await Expect(_page!.GetByTestId("index-home")).ToBeVisibleAsync();
     }
 
     [Fact]

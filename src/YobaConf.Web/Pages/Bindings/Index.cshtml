@@ -87,10 +87,10 @@ else
 						<td class="font-mono text-xs" data-testid="bindings-value">
 							@if (r.Binding.Kind == BindingKind.Secret)
 							{
-								<span class="font-mono text-xs" data-testid="bindings-secret-masked" data-binding-id="@r.Binding.Id">&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;</span>
+								<span class="font-mono text-xs" data-testid="bindings-secret-masked" data-binding-id="@r.Binding.Id">••••••</span>
 								<button type="button" class="btn btn-xs btn-ghost ml-2"
 									data-testid="bindings-secret-reveal" data-binding-id="@r.Binding.Id"
-									title="Reveal for 10s">&#128065;</button>
+									title="Reveal for 10s">👁</button>
 							}
 							else
 							{
