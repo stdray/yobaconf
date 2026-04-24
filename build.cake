@@ -500,14 +500,20 @@ Task("Lint")
 	.IsDependentOn("FrontendTypecheck")
 	.IsDependentOn("FormatVerify");
 
-// Single-target entry point for the PR-only `ci` job — Lint fast-fails before
-// the heavier Test/E2ETest phases. Test + E2ETest share the Build task (Cake DAG).
-// Keeps the CI yml simple (one `./build.sh --target=CI` line) and ensures heavy
-// work doesn't run if lint or unit tests fail.
-Task("CI")
+// Canonical verification umbrella — every gate the repo enforces, in one target.
+// Dev loop: `./build.sh --target=Verify --quiet` (~30s) gives the same pass/fail
+// that CI will. Pre-commit hook (.githooks/pre-commit) calls this. CI job in
+// GitHub Actions delegates to this via the `CI` alias below.
+Task("Verify")
 	.IsDependentOn("Lint")
 	.IsDependentOn("Test")
 	.IsDependentOn("E2ETest");
+
+// CI alias. ci.yml keeps calling `--target=CI` for semantic clarity from the
+// GitHub-Actions context; locally you'd call `--target=Verify` which means the
+// same thing via the Cake DAG.
+Task("CI")
+	.IsDependentOn("Verify");
 
 Task("Default")
 	.IsDependentOn("DockerPush");

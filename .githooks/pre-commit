@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pre-commit hook — runs the full Verify target (Lint + Test + E2ETest) before
+# allowing a commit. Activate once per clone via:
+#
+#   git config core.hooksPath .githooks
+#
+# Bypass with `git commit --no-verify` for known-broken state (rebase mid-flight,
+# WIP commits inside a branch that isn't being pushed yet). Abuse of --no-verify
+# is self-punishing: CI runs the same Verify target on every PR.
+#
+# Runtime budget: ~30s on a warm dev machine — Lint (~8s, FormatVerify dominates),
+# Test (~3s unit), E2ETest (~20s Playwright). If this is too slow for your
+# per-commit rhythm, invoke only the fast gate by running:
+#
+#   ./build.sh --target=Lint
+#
+# and let the pre-push / CI catch the heavier E2E regressions. But per-commit
+# Verify is the policy because the feedback cost of catching a regression at
+# `git push` (after N commits) is higher than catching it here.
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# --quiet uses the filtered pipeline output from build.sh so pre-commit logs stay
+# scannable. On failure the filter still surfaces error lines.
+./build.sh --target=Verify --quiet

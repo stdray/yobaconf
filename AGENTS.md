@@ -9,7 +9,8 @@ Toolchain, build pipeline, CI, and scaffolded Core / Web / Tests projects are in
 ## Build entry points
 
 - **Local:** `./build.sh --target=Test` (bash) or `pwsh ./build.ps1 -Target Test` (PowerShell). Bootstrap restores Cake + GitVersion tools, then runs the Cake task.
-- **Cake tasks:** Clean → Restore → Version (GitVersion) → Build → Test → Docker → DockerSmoke → DockerPush. Plus a standalone `Dev` task for the watcher loop.
+- **Cake tasks:** Clean → Restore → Version (GitVersion) → Build → Test → Docker → DockerSmoke → DockerPush. Plus a standalone `Dev` task for the watcher loop, a `Verify` umbrella (Lint + Test + E2ETest) for pre-push confidence, and granular lint sub-tasks (`Lint`, `FrontendLint`, `FrontendTypecheck`, `EnglishOnly`, `LintInlineScripts`, `FormatVerify`) each runnable in isolation.
+- **Verify (pre-commit gate):** `./build.sh --target=Verify --quiet` runs the same gates CI runs — every linter, unit tests, E2E — in ~30 s on a warm machine. Backed by a pre-commit git hook at `.githooks/pre-commit`; activate once per clone with `git config core.hooksPath .githooks`. Bypass with `git commit --no-verify` only for known-broken WIP; CI re-runs Verify on every PR so abuse is self-punishing.
 - **Dev loop:** `./build.sh --target=Dev` / `pwsh ./build.ps1 -Target Dev` runs `bun run dev` (ts + css watchers via concurrently) and `dotnet watch` in parallel, both streaming to the current terminal. Ctrl+C kills both trees. Replaces the older two-window `run_dev.ps1`.
 - **Other local targets:** `--target=Docker` builds the image locally; `--target=DockerPush --dockerPush=true` requires `GHCR_USERNAME` + `GHCR_TOKEN` env or prior `docker login`.
 - **CI:** mirrors `./build.sh --target=Test` for the fast lane; on `main` push + `deploy` tag push also runs `--target=DockerPush` with ghcr.io credentials.
