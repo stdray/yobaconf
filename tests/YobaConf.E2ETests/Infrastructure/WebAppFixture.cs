@@ -27,6 +27,8 @@ public sealed class WebAppFixture : IAsyncLifetime
     public IApiKeyAdmin ApiKeyAdmin => Services.GetRequiredService<IApiKeyAdmin>();
     public IUserAdmin UserAdmin => Services.GetRequiredService<IUserAdmin>();
     public IUserStore UserStore => Services.GetRequiredService<IUserStore>();
+    public IAdminTokenAdmin AdminTokenAdmin => Services.GetRequiredService<IAdminTokenAdmin>();
+    public IAdminTokenStore AdminTokenStore => Services.GetRequiredService<IAdminTokenStore>();
     public ITagVocabularyStore VocabularyStore => Services.GetRequiredService<ITagVocabularyStore>();
     public ITagVocabularyAdmin VocabularyAdmin => Services.GetRequiredService<ITagVocabularyAdmin>();
 

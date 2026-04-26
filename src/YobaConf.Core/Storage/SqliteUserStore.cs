@@ -150,9 +150,18 @@ public sealed class SqliteUserStore : IUserStore, IUserAdmin
         var affected = db.GetTable<UserRow>().Where(r => r.Username == username).Delete();
         if (affected == 0) return false;
 
+        var ts = at.ToUnixTimeMilliseconds();
+
+        // Cascade hard-delete admin tokens owned by this user (decision-log 2026-04-26
+        // "Admin API: personal admin tokens"). Tokens that outlive their user are zombies
+        // — they can't be reactivated and the audit log retains the actor string. Each
+        // cascade-deleted token gets its own AuditLog entry (tagged `|cascade=user-delete`)
+        // so the history page renders the chain explicitly.
+        SqliteAdminTokenStore.HardDeleteByUsernameTx(db, username, ts, actor);
+
         SqliteAuditLogStore.Append(db, new AuditLogRow
         {
-            At = at.ToUnixTimeMilliseconds(),
+            At = ts,
             Actor = actor,
             Action = AuditAction.Deleted.ToString(),
             EntityType = AuditEntityType.User.ToString(),

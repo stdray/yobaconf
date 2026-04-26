@@ -1,0 +1,76 @@
+@page "/admin/profile"
+@model YobaConf.Web.Pages.Admin.ProfileModel
+@{
+	ViewData["Title"] = "Profile";
+}
+
+<div class="mb-4 text-sm">
+	<a href="/" class="link opacity-70 hover:opacity-100" data-testid="back-to-index">← Home</a>
+</div>
+
+<h1 class="text-xl font-semibold mb-4" data-testid="profile-title">Profile</h1>
+
+<p class="text-sm opacity-70 mb-4" data-testid="profile-username">
+	Logged in as <code class="font-mono">@Model.Username</code>.
+</p>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="profile-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.NewlyCreatedToken))
+{
+	<div class="alert alert-warning mb-3" data-testid="profile-plaintext-alert">
+		<div class="flex flex-col gap-2 w-full">
+			<span><strong>Save this token now — it will not be shown again.</strong></span>
+			<div class="flex items-start gap-2">
+				<code class="font-mono text-sm break-all flex-1" data-testid="profile-plaintext">@Model.NewlyCreatedToken</code>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="profile-copy-token" data-token="@Model.NewlyCreatedToken" aria-label="Copy token">Copy</button>
+			</div>
+			<span class="text-xs opacity-0" data-testid="profile-copy-feedback" aria-live="polite"></span>
+		</div>
+	</div>
+}
+
+<section class="mb-6">
+	<h2 class="text-sm uppercase opacity-70 mb-2">Create admin token</h2>
+	<p class="text-xs opacity-60 mb-3">
+		Personal access tokens for the admin JSON API at <code class="font-mono">/v1/admin/*</code>.
+		Use one token per script / machine for granular revoke. Token grants the same rights as your cookie session.
+	</p>
+	<form method="post" asp-page-handler="Create" autocomplete="off" class="flex items-end gap-2" data-testid="profile-create-form">
+		<label class="form-control flex-1">
+			<span class="label-text">Description (e.g. "laptop dev", "ci-deploy")</span>
+			<input type="text" name="description" autocomplete="off" required maxlength="120"
+				class="input input-bordered input-sm font-mono text-xs"
+				data-testid="profile-create-description" />
+		</label>
+		<button type="submit" class="btn btn-sm btn-primary" data-testid="profile-create-submit">Create</button>
+	</form>
+</section>
+
+<section>
+	<h2 class="text-sm uppercase opacity-70 mb-2">Active tokens (@Model.Tokens.Count)</h2>
+	@if (Model.Tokens.Count == 0)
+	{
+		<div class="text-xs opacity-60 italic" data-testid="profile-tokens-empty">No tokens yet.</div>
+	}
+	else
+	{
+		<div class="border border-base-300 rounded divide-y divide-base-300" data-testid="profile-tokens-list">
+			@foreach (var t in Model.Tokens)
+			{
+				<div class="flex items-center gap-3 p-2" data-testid="profile-token-row" data-token-id="@t.Id">
+					<span class="font-mono text-xs text-primary" data-testid="profile-token-prefix">@t.TokenPrefix…</span>
+					<span class="text-xs flex-1" data-testid="profile-token-description">@t.Description</span>
+					<span class="text-xs opacity-60" data-testid="profile-token-updated">@t.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</span>
+					<form method="post" asp-page-handler="Revoke" class="inline"
+						onsubmit="return confirm('Revoke token @t.TokenPrefix… (@t.Description)? Existing scripts using this token will get 401 immediately.');">
+						<input type="hidden" name="id" value="@t.Id" />
+						<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="profile-token-revoke">Revoke</button>
+					</form>
+				</div>
+			}
+		</div>
+	}
+</section>

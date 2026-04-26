@@ -39,6 +39,7 @@ public enum AuditEntityType
     ApiKey,
     User,
     TagVocabulary,
+    AdminToken,
 }
 
 public interface IAuditLogStore

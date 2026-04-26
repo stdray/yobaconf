@@ -20,7 +20,7 @@ namespace YobaConf.Core.Storage;
 // version=2, the drop branch never re-fires.
 static class SqliteSchema
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
 
     public static void EnsureSchema(DataConnection db)
     {
@@ -56,6 +56,11 @@ static class SqliteSchema
         {
             db.Execute("ALTER TABLE TagVocabulary ADD COLUMN Priority INTEGER NOT NULL DEFAULT 0;");
         }
+
+        // v4 → v5: AdminTokens table for the admin-API personal access tokens (Phase G.1).
+        // Purely additive — table is created via AllStatements below with CREATE IF NOT
+        // EXISTS, so this branch is intentionally empty. The version bump exists so future
+        // destructive migrations can gate against >= 5.
 
         if (current < CurrentSchemaVersion)
             db.Execute($"PRAGMA user_version = {CurrentSchemaVersion};");
@@ -190,6 +195,38 @@ static class SqliteSchema
 		    ON TagVocabulary(TagKey, TagValue) WHERE IsDeleted = 0;
 		""";
 
+    // AdminTokens — personal access tokens per User for the admin JSON API (Phase G.1,
+    // spec §3 + §8). `Username` is plain TEXT (no SQL FK; integrity via SqliteUserStore
+    // .Delete which calls SqliteAdminTokenStore.HardDeleteByUsernameTx in the same
+    // transaction). `IsDeleted` flag covers self-revoke from /Admin/Profile only —
+    // cascade-on-user-delete is a hard delete, so token rows never outlive their owner.
+    public const string CreateAdminTokensTable = """
+		CREATE TABLE IF NOT EXISTS AdminTokens (
+			Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			Username    TEXT    NOT NULL,
+			TokenHash   TEXT    NOT NULL,
+			TokenPrefix TEXT    NOT NULL,
+			Description TEXT    NOT NULL,
+			UpdatedAt   INTEGER NOT NULL,
+			IsDeleted   INTEGER NOT NULL DEFAULT 0
+		);
+		""";
+
+    // Validate() lookups happen on every /v1/admin/* request — UNIQUE on TokenHash among
+    // live rows lets the planner do an indexed scan and enforces the spec invariant that
+    // no two live tokens share a hash.
+    public const string CreateAdminTokensTokenHashIndex = """
+		CREATE UNIQUE INDEX IF NOT EXISTS ux_admin_tokens_token_hash_live
+		    ON AdminTokens(TokenHash) WHERE IsDeleted = 0;
+		""";
+
+    // Cascade hard-delete on IUserAdmin.Delete sweeps `WHERE Username = ?`; this index
+    // keeps the sweep + the /Admin/Profile per-user listing both indexed.
+    public const string CreateAdminTokensUsernameIndex = """
+		CREATE INDEX IF NOT EXISTS ix_admin_tokens_username
+		    ON AdminTokens(Username) WHERE IsDeleted = 0;
+		""";
+
     public static readonly IReadOnlyList<string> AllStatements =
     [
         CreateBindingsTable,
@@ -203,5 +240,8 @@ static class SqliteSchema
         CreateAuditLogTagSetAtIndex,
         CreateTagVocabularyTable,
         CreateTagVocabularyKeyValueLiveIndex,
+        CreateAdminTokensTable,
+        CreateAdminTokensTokenHashIndex,
+        CreateAdminTokensUsernameIndex,
     ];
 }

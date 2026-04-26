@@ -98,6 +98,35 @@ Validation rules:
 - `request.TagVector` must contain every entry of `RequiredTagsJson` с exact value match (subset-superset).
 - Если `AllowedKeyPrefixes` non-null → вернуть только те keys, которые prefix-match любому из allowed. Consumer получает **subset** bindings (фильтрация на уровне resolve, не ошибка).
 
+### AdminTokens — personal access tokens
+
+Per-user токены для scripting / automation поверх admin-API (`/v1/admin/*`, см. §8). Семантически **роль user'а через header**, не runtime-ключ — отдельная таблица, не reuse `ApiKeys` (см. `decision-log.md` 2026-04-26 "Admin API: personal admin tokens").
+
+```sql
+CREATE TABLE AdminTokens (
+    Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    Username     TEXT    NOT NULL REFERENCES Users(Username),
+    TokenHash    TEXT    NOT NULL,
+    TokenPrefix  TEXT    NOT NULL,   -- first 6 chars for UI display
+    Description  TEXT    NOT NULL,
+    UpdatedAt    INTEGER NOT NULL,
+    IsDeleted    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX ux_admin_tokens_hash_live
+    ON AdminTokens(TokenHash) WHERE IsDeleted = 0;
+```
+
+Token shape — тот же `ApiKeyTokenGenerator` (22-char base64url, 122 бита). Storage — sha256-hex hash + 6-char prefix. Plaintext возвращается **один раз** при создании. `Username` хранится как plain TEXT (consistency через handler-логику, без жёсткого SQL FK).
+
+**Multi-token per user — by design.** UNIQUE стоит на `TokenHash`, не на `(Username, ...)`. Один владелец держит отдельные токены под отдельные скрипты / машины (`Description`: "laptop dev", "ci-deploy", "nightly-backup") — компрометация одной машины revoke'ается без затрагивания остальных; rotation без downtime — новый токен → деплой → revoke старого как штатный flow. Audit actor `<Username>:admin-token:<TokenPrefix>` различает действия разных токенов того же user'а. Лимита на N токенов per user в MVP нет.
+
+**Lifecycle:**
+- Self-revoke через `/Admin/Profile` → `IsDeleted=1`, row остаётся для audit-history.
+- `IUserAdmin.Delete(username)` → **hard-delete** all tokens одной транзакцией с hard-delete user'а. Reasoning: Users hard-delete'ятся (нет `IsDeleted` колонки); token, переживший user'а, реактивирован быть не может (нет на что вернуть привязку), а audit-log хранит actor строкой `<Username>:admin-token:<TokenPrefix>` — текст переживает удаление row. UI user-delete confirm-dialog обязан показать "user has N active tokens" перед удалением.
+
+В MVP права у токена симметричны user'у — full CRUD на bindings / api-keys. Per-token scope (TagSet-restricted tokens) — deferred вместе с RBAC (см. open questions в `plan.md`).
+
 ### AuditLog
 
 Unchanged в сравнении с v1 spec — append-only history всех Bindings/ApiKeys операций. Одна row на каждое write-action.
@@ -297,11 +326,23 @@ CRUD для ApiKeys table. Create-form:
 
 ### Admin surface
 
-Currently Razor-Pages + htmx (не JSON API). Future: JSON-endpoints за `[Authorize]` cookie-auth for scripting/automation:
-- `PUT /v1/admin/bindings` body `{tagSet, key, value, kind}` — upsert.
+Razor-Pages + htmx — primary UI (cookie-auth, antiforgery). JSON-endpoints под `/v1/admin/*` за **personal admin tokens** (см. §3 AdminTokens) для scripting / automation:
+
+- Auth — любой из:
+    - `Authorization: Bearer <token>` (primary, HTTP-стандарт),
+    - `X-YobaConf-AdminToken: <token>` (equivalent, симметрично `X-YobaConf-ApiKey`),
+    - `?adminToken=<token>` query (fallback для curl-quick-test).
+
+    Header'ы > query при наличии. Если `Authorization: Bearer` и `X-YobaConf-AdminToken` присутствуют с **разными** значениями — 400 `ambiguous_auth` (refuse to guess). Constant-time hash compare. 401 JSON на missing / invalid / soft-deleted / orphan-username.
+- `PUT /v1/admin/bindings` body `{tagSet, keyPath, kind, value}` — upsert (idempotent на (TagSet, KeyPath)).
 - `DELETE /v1/admin/bindings/{id}` — soft-delete.
-- `GET /v1/admin/bindings?tag={k}={v}&key={pattern}` — list.
-- `POST /v1/admin/rollback/{auditId}` — rollback.
+- `GET /v1/admin/bindings?tag={k}={v}&key={pattern}` — list (secrets — `value=null` + `kind=Secret`, plaintext не leak'ает).
+- `PUT /v1/admin/api-keys` / `DELETE /v1/admin/api-keys/{id}` / `GET /v1/admin/api-keys` — runtime-keys CRUD. Plaintext token возвращается один раз при создании.
+- `POST /v1/admin/rollback/{auditId}` — rollback (deferred к Phase D wiring; admin-API становится JSON-обёрткой над `IBindingStoreAdmin.Restore`).
+
+Token-auth выбран вместо cookie-reuse: cookie-флоу требует POST `/Login` + парсинг `Set-Cookie` + antiforgery-token в скрипте; admin-token — один header, отзыв через `/Admin/Profile` без смены пароля. Lifecycle токенов независим от UI-сессий.
+
+Audit actor для admin-token-инициированных изменений — `<Username>:admin-token:<TokenPrefix>`, для UI-cookie — `<Username>`, для runtime-key (только resolve, не пишет) — N/A. См. §7.
 
 ### API-key scope
 

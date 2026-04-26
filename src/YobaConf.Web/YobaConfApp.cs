@@ -69,6 +69,13 @@ public static class YobaConfApp
             builder.Services.AddSingleton<Core.Auth.IUserStore>(sp => sp.GetRequiredService<SqliteUserStore>());
             builder.Services.AddSingleton<Core.Auth.IUserAdmin>(sp => sp.GetRequiredService<SqliteUserStore>());
 
+            // Admin tokens — personal access tokens for the admin JSON API (Phase G.1).
+            // Shares the binding-store DB file. Auth middleware (G.2) calls Validate;
+            // /Admin/Profile (G.5) calls IAdminTokenAdmin for the per-user CRUD surface.
+            builder.Services.AddSingleton<SqliteAdminTokenStore>();
+            builder.Services.AddSingleton<Core.Auth.IAdminTokenStore>(sp => sp.GetRequiredService<SqliteAdminTokenStore>());
+            builder.Services.AddSingleton<Core.Auth.IAdminTokenAdmin>(sp => sp.GetRequiredService<SqliteAdminTokenStore>());
+
             // Audit log — read surface only; writes flow through the admin stores (spec §7
             // invariant: "only storage impl populates").
             builder.Services.AddSingleton<SqliteAuditLogStore>();
@@ -228,6 +235,13 @@ public static class YobaConfApp
         });
 
         app.MapConfEndpoint();
+
+        // /v1/admin/* — JSON admin-API for scripting, gated by admin-token auth (Phase G).
+        // The group bypasses the cookie-auth fallback policy via AllowAnonymous (set in
+        // AdminTokenAuth.RequireAdminToken); the AdminTokenAuthFilter is the actual gate.
+        var adminGroup = app.MapGroup("/v1/admin").RequireAdminToken();
+        adminGroup.MapAdminBindings();
+        adminGroup.MapAdminApiKeys();
 
         app.MapRazorPages();
     }

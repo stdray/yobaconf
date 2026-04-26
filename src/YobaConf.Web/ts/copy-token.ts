@@ -1,9 +1,10 @@
-// Client-side copy-to-clipboard for the API key plaintext token.
-// Single use — token is shown once after creation.
-// Click copies via navigator.clipboard, shows "Copied" for 2s.
+// Client-side copy-to-clipboard for one-shot plaintext tokens (api-keys, admin-profile).
+// Each origin page renders a button with data-testid="<origin>-copy-token" and a feedback
+// span with data-testid="<origin>-copy-feedback"; this module finds them via the shared
+// suffix so a new origin only needs to follow the naming convention.
 
-const COPY_BUTTON_SELECTOR = "button[data-testid='api-keys-copy-token']";
-const COPY_FEEDBACK_SELECTOR = "span[data-testid='api-keys-copy-feedback']";
+const COPY_BUTTON_SELECTOR = "button[data-testid$='-copy-token']";
+const COPY_FEEDBACK_SELECTOR = "span[data-testid$='-copy-feedback']";
 
 let _copyListenerAdded = false;
 
@@ -14,7 +15,11 @@ function onCopyClick(evt: Event): void {
 	const token = button.dataset["token"];
 	if (!token) return;
 
-	const feedbackEl = document.querySelector(COPY_FEEDBACK_SELECTOR) as HTMLSpanElement | null;
+	// Feedback span lives in the same alert container as the button; scope the lookup
+	// so multiple copy-token contexts on one page can't cross-fire. Falls back to a
+	// global lookup for backwards compatibility with single-context pages.
+	const container = button.closest(".alert");
+	const feedbackEl = (container ?? document).querySelector(COPY_FEEDBACK_SELECTOR) as HTMLSpanElement | null;
 
 	button.disabled = true;
 

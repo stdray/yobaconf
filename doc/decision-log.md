@@ -4,6 +4,59 @@
 
 ---
 
+## 2026-04-26 — Admin API: personal admin tokens, отдельная таблица от runtime ApiKeys
+
+**Решение:** новая Phase G в `doc/plan.md` — JSON admin-API под `/v1/admin/*` за token-auth для scripting/automation. Tokens — отдельная сущность `AdminTokens(Id, Username, TokenHash UNIQUE, TokenPrefix, Description, UpdatedAt, IsDeleted)` с тем же 22-char base64url shape'ом, что и runtime `ApiKeys`. Auth — любой из: `Authorization: Bearer <token>` (primary, HTTP-стандарт), `X-YobaConf-AdminToken: <token>` (equivalent), `?adminToken=` query (fallback). Конфликт двух разных значений в Bearer + custom header → 400 `ambiguous_auth`. Эндпоинты в MVP-scope фазы: bindings CRUD (PUT/DELETE/GET), api-keys CRUD; rollback переезжает следом за Phase D.2; users CRUD и bulk-batch — deferred.
+
+**Use case-триггер:** owner хочет (1) проставить 14 значений для одного tag-set одним скриптом; (2) обновить значение одной переменной для трёх env'ов (`for env in dev staging prod; ...`); (3) ротировать runtime-ключи без UI-кликов. Через UI это болезненно начиная с десятка bindings.
+
+**Почему personal admin tokens, а не cookie-reuse существующего `/Login`:**
+
+- Cookie-флоу для скрипта требует прокинуть `Username` + plaintext-password в env-vars и парсить `Set-Cookie` из POST `/Login`. Personal token — один header, отзыв через `/Admin/Profile` без смены пароля.
+- Antiforgery-token на форме `/Login` — лишний обходной шаг для автоматизации; admin-token обходит CSRF штатно (он сам — секрет-аутентификатор, не на cookie-сессии).
+- Lifecycle токенов независим от паролей. Ротация token'а = soft-delete + create, никаких прерываний для UI-сессии того же user'а на других машинах.
+
+**Почему отдельная таблица, а не reuse `ApiKeys`:**
+
+- Runtime `ApiKeys` семантически — "доступ к resolve со scope tags + key-prefix filter". Admin tokens — "роль user'а: full CRUD". Поля `RequiredTags`/`AllowedKeyPrefixes` к admin tokens неприменимы; `Username` (FK → Users) к runtime keys неприменим.
+- Single-table-with-flag (`IsAdminToken bool`) — генерация багов класса "забыл проверить флаг — admin token прошёл валидацию `ConfEndpoint`'а как runtime-key и наоборот". Type-safety через separate tables — тот же rationale, что Variables vs Secrets в v1 (см. AGENTS.md hard invariants).
+- Audit actor для admin token'а — `<Username>:admin-token:<TokenPrefix>`; для runtime key — `apikey:<TokenPrefix>` (разная семантика чтения истории).
+
+**Почему bulk endpoint deferred:**
+
+- Pet-scale (≤200 bindings). Sequential `PUT` × 14 ≈ секунда total на pet-VM. Atomicity на batch-уровне реально нужна только для миграций / restore (E.1 paste-import уже планирует собственный transactional bulk insert).
+- Преждевременная abstraction'а под недоказанный pain.
+
+**Параллельно с Phase C/D, не блокирует first deploy:**
+
+- A+B (core engine + admin UI) — критический путь до B.6 first-deploy checkpoint, без изменений.
+- G стартует когда G.1-G.3 нужны owner'у в реальной работе. Не блокируется на C (consumer SDK) или D (audit/history UI).
+- Spec §8 "Admin surface" обновляется (cookie-auth → token-auth); §3 пополняется `AdminTokens` schema.
+
+**Cascade-deletion при `IUserAdmin.Delete(username)`:**
+
+- **Hard-delete токенов** одной транзакцией с hard-delete user'а. `IsDeleted` flag в AdminTokens используется только для self-revoke через `/Admin/Profile` (живой user гасит свой токен, row остаётся для audit-history).
+- Reasoning: Users итак hard-delete'ятся (нет `IsDeleted` на User entity); token, переживший user'а, реактивирован быть не может — нет на что вернуть привязку. Audit-log хранит actor строкой `<Username>:admin-token:<TokenPrefix>`, текст переживает удаление row.
+- Альтернатива "soft-delete cascade" (token-row остаётся с IsDeleted=1) отвергнута: оставляет zombie row'ы со сломанной семантикой `Username` (формальной FK нет, но концептуально привязка broken). Альтернатива "block user-delete если есть live-tokens" отвергнута как лишний ручной шаг — UI confirm-dialog должен показать "user has N active tokens" перед удалением, и этого достаточно.
+- SQL FK constraint **не ставим**. yobaconf вообще не использует жёсткие FK; integrity обеспечивается handler'ом `IUserAdmin.Delete` (одна транзакция: `DELETE FROM AdminTokens WHERE Username=?` → `DELETE FROM Users WHERE Username=?`).
+
+**Отложенные подвопросы:**
+
+- Per-token scope (scoped admin tokens) — связано с open question "RBAC: super-admin vs scoped user" в plan.md. Дизайн-spike совместный с `User.Scope`.
+- `POST /v1/admin/rollback/{auditId}` — domain-логика rollback'а реализуется в Phase D.2; admin-API endpoint становится тонкой JSON-обёрткой над `IBindingStoreAdmin.Restore`.
+- Users CRUD через API — deferred до прорастания реального need (incident-response массовой ротации).
+- Token last-used timestamp / per-token rate-limit — полезно для отладки "какой скрипт юзает этот токен", но не блокирует use case.
+
+**Cross-refs:**
+
+- `doc/spec.md` §3 (AdminTokens schema added) + §8 "Admin surface" (cookie-auth → token-auth model).
+- `doc/plan.md` Phase G (G.1-G.6 + deferred sub-list).
+- `src/YobaConf.Core/Auth/ApiKey.cs` — reference shape для AdminToken entity.
+- `src/YobaConf.Core/Auth/ApiKeyTokenGenerator.cs` — reused as-is (token shape identical).
+- `src/YobaConf.Core/Storage/SqliteApiKeyStore.cs` — reference impl pattern для `SqliteAdminTokenStore`.
+
+---
+
 ## 2026-04-24 — C.1 template-response shapes закрыт инкрементально
 
 **Решение:** задача C.1 закрывается добавлением snapshot-покрытия на pipeline- и endpoint-уровне, без отдельного коммита реализации.
