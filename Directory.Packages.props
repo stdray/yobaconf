@@ -21,12 +21,14 @@
 
 		<!-- OpenTelemetry Phase C.5: emit spans from the resolve pipeline + SQLite store
 		     to yobalog's OTLP /v1/traces endpoint (HTTP/Protobuf, X-Seq-ApiKey auth).
-		     Versions matched to yobalog's pins (1.15.1 core; instrumentation 1.12.0 —
-		     that family lags core by one minor). -->
-		<PackageVersion Include="OpenTelemetry" Version="1.15.1" />
-		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.1" />
-		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.1" />
-		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
+		     1.15.3 closes three GHSA advisories that landed against 1.15.1 — propagation
+		     header parsing (GHSA-g94r-2vxg-569j), unbounded grpc-status-details-bin
+		     (GHSA-mr8r-92fq-pj8p), unbounded OTLP HTTP response body (GHSA-q834-8qmm-v933).
+		     CI's `NuGetAudit` promotes NU1902 to error so vulnerable pins fail restore. -->
+		<PackageVersion Include="OpenTelemetry" Version="1.15.3" />
+		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
 
 	</ItemGroup>
 
