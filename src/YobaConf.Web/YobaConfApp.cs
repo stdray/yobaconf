@@ -44,6 +44,10 @@ public static class YobaConfApp
         // Resolve conflict tie-breaker options — default-off (UsePriorityTieBreaker=false).
         // Set via appsettings.json section ResolveConflicts or env var ResolveConflicts__UsePriorityTieBreaker.
         builder.Services.Configure<ResolveOptions>(builder.Configuration.GetSection("ResolveConflicts"));
+        // Bootstrap api-keys from config — read by ConfigApiKeyStore. Empty section =
+        // no bootstrap keys, only SqliteApiKeyStore is consulted.
+        builder.Services.Configure<Core.Auth.BootstrapApiKeyOptions>(
+            builder.Configuration.GetSection("BootstrapApiKeys"));
 
         // SQLite-backed bindings store (A.1). Config-gated so integration tests without
         // `Storage:DataDirectory` set boot without a store — /ready then returns 200 as
@@ -58,8 +62,15 @@ public static class YobaConfApp
             builder.Services.AddSingleton<IBindingStoreAdmin>(sp => sp.GetRequiredService<SqliteBindingStore>());
 
             // Api-keys store shares the same DB file (one SQLite database, multiple tables).
+            // IApiKeyStore is wrapped in CompositeApiKeyStore so bootstrap keys from
+            // appsettings (BootstrapApiKeys) validate alongside admin-minted keys. IApiKeyAdmin
+            // stays SQLite-only — config keys are immutable from the admin UI.
             builder.Services.AddSingleton<SqliteApiKeyStore>();
-            builder.Services.AddSingleton<Core.Auth.IApiKeyStore>(sp => sp.GetRequiredService<SqliteApiKeyStore>());
+            builder.Services.AddSingleton<Core.Auth.ConfigApiKeyStore>();
+            builder.Services.AddSingleton<Core.Auth.IApiKeyStore>(sp =>
+                new Core.Auth.CompositeApiKeyStore(
+                    sp.GetRequiredService<Core.Auth.ConfigApiKeyStore>(),
+                    sp.GetRequiredService<SqliteApiKeyStore>()));
             builder.Services.AddSingleton<Core.Auth.IApiKeyAdmin>(sp => sp.GetRequiredService<SqliteApiKeyStore>());
 
             // Users store — cookie-auth admin accounts. Login falls back to config-admin when

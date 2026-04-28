@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-04-28 — Bootstrap api-keys из appsettings (`ConfigApiKeyStore`)
+
+**Решение:** добавлен `ConfigApiKeyStore` (read-only, in-memory, IOptions-driven) + `CompositeApiKeyStore` (first-match-wins) в `YobaConf.Core/Auth/`. DI разворачивает `IApiKeyStore` как Composite(Config, Sqlite); `IApiKeyAdmin` остаётся SQLite-only (config-keys immutable из UI). Секция `BootstrapApiKeys:Keys[]` в appsettings/env, формат:
+
+```json
+"BootstrapApiKeys": {
+  "Keys": [
+    {
+      "Token": "...",
+      "Description": "yobapub-server",
+      "RequiredTags": { "env": "prod", "project": "yobapub" },
+      "AllowedKeyPrefixes": ["client."]
+    }
+  ]
+}
+```
+
+**Use case-триггер:** self-host bundle (docker-compose с yobaconf+yobalog+consumer'ом). Без bootstrap-keys пользователь после первого `compose up` обязан зайти в UI yobaconf и создать ключ руками для consumer'а — ломает "zero-touch" сценарий. С bootstrap-keys секция в `.env` + один `docker compose up` поднимает рабочий стек.
+
+**Почему не нарушает invariant "no self-config":**
+
+- Spec §2 запрещает yobaconf'у читать **свой собственный конфиг через yobaconf** (bootstrap cycle). Чтение api-keys из appsettings — это infra-bootstrap того же класса, что `Admin:Username` / `Admin:PasswordHash` / `YOBACONF_MASTER_KEY` — все живут в env/appsettings по тому же rationale. Никакого ребраного цикла нет — appsettings → ConfigApiKeyStore → ApiKey, чисто однонаправленно.
+- Identity-семантика config-keys и sqlite-keys одинаковая (один и тот же `ApiKey` record), отличается только источник + writability. Audit-log для config-keys не пишется (нет writes), что согласуется с "append-on-action" семантикой §7.
+
+**Дизайн-выборы:**
+
+- **Hash-keyed dict, не plaintext-keyed.** `ApiKey.TokenHash` — required field в модели; чтобы не вычислять hash дважды (на load + на validate), храним по hash. Это слегка отличается от yobalog/`ConfigApiKeyStore`, который держит `Dictionary<string, WorkspaceId>` по plaintext — там TokenHash в `ApiKey` модели нет. Семантика для caller'а идентична.
+- **Constant-time double-check.** Зеркалит `SqliteApiKeyStore.Validate` flow — два пути (config / sqlite) timing-неотличимы для атакующего. Стоимость — одна `Convert.FromHexString` на validate-call (несколько микросекунд, не bottleneck для 200-bindings pet-scale).
+- **Synthetic Ids — отрицательные, monotonically decreasing (-1, -2, ...).** SQLite rowid'ы всегда положительные autoincrement → коллизии исключены. Audit-actor строки для config-keys не пишутся, но если когда-нибудь будут (например future "key rotation observed via audit") — отрицательный Id чётко маркирует source.
+- **Duplicate tokens — first wins, без exception'а.** Config-источники стэкуются (appsettings → user-secrets → env-vars → command-line); один и тот же token в двух источниках — реальный сценарий (`.env.example` + override в prod `.env`), не error.
+- **Empty `AllowedKeyPrefixes` list нормализуется в null.** Зеркалит `SqliteApiKeyStore.Create` логику — `null` означает "no prefix filter", пустой list создавал бы scope "ничего не разрешено", что бессмысленно для config-key.
+
+**Альтернативы рассмотренные:**
+
+- **Bootstrap-binding с ключами вместо отдельной секции.** Отвергнуто — yobaconf invariant запрещает self-config. Bindings — это конфиг для consumer'ов, api-keys — это конфиг для самого yobaconf. Раз разные классы конфига, раз разные источники.
+- **Init-контейнер, который через `/v1/admin/api-keys` PUT засеет ключи.** Сложнее (нужен initial admin-token), требует двух-этапной orchestration, ломает идемпотентность compose-up. ConfigApiKeyStore проще — keys читаются на старте каждого процесса.
+- **Plaintext lookup без hash (как yobalog).** Отвергнуто — `ApiKey.TokenHash` required, hash считать всё равно. Hash-keyed dict даёт ту же семантику без двойной работы.
+
+**Cross-refs:**
+
+- `src/YobaConf.Core/Auth/BootstrapApiKeyOptions.cs` — Options class, IOptions-binding на секцию `BootstrapApiKeys`.
+- `src/YobaConf.Core/Auth/ConfigApiKeyStore.cs` — read-only IApiKeyStore.
+- `src/YobaConf.Core/Auth/CompositeApiKeyStore.cs` — first-match-wins composition.
+- `src/YobaConf.Web/YobaConfApp.cs` — DI wiring (`AddSingleton<IApiKeyStore>(... new CompositeApiKeyStore(config, sqlite))`).
+- `src/YobaConf.Web/appsettings.json` — `BootstrapApiKeys.Keys: []` empty default.
+- `tests/YobaConf.Tests/Auth/ConfigApiKeyStoreTests.cs` — happy-path, dedupe, empty/null/wrong-token, scope-check.
+- `tests/YobaConf.Tests/Auth/CompositeApiKeyStoreTests.cs` — first-match wins, fall-through, no-stores.
+- yobalog `src/YobaLog.Core/Auth/ConfigApiKeyStore.cs` — prior-art в sibling-проекте; identical role, отличается signature (`ValueTask<ApiKeyValidation> ValidateAsync` vs sync `Validate`).
+
+---
+
 ## 2026-04-26 — Admin API: personal admin tokens, отдельная таблица от runtime ApiKeys
 
 **Решение:** новая Phase G в `doc/plan.md` — JSON admin-API под `/v1/admin/*` за token-auth для scripting/automation. Tokens — отдельная сущность `AdminTokens(Id, Username, TokenHash UNIQUE, TokenPrefix, Description, UpdatedAt, IsDeleted)` с тем же 22-char base64url shape'ом, что и runtime `ApiKeys`. Auth — любой из: `Authorization: Bearer <token>` (primary, HTTP-стандарт), `X-YobaConf-AdminToken: <token>` (equivalent), `?adminToken=` query (fallback). Конфликт двух разных значений в Bearer + custom header → 400 `ambiguous_auth`. Эндпоинты в MVP-scope фазы: bindings CRUD (PUT/DELETE/GET), api-keys CRUD; rollback переезжает следом за Phase D.2; users CRUD и bulk-batch — deferred.
