@@ -5,6 +5,13 @@
 		<AssemblyName>YobaConf.Client</AssemblyName>
 		<Description>Client SDK for fetching configs from YobaConf into Microsoft.Extensions.Configuration.</Description>
 		<PackageId>YobaConf.Client</PackageId>
+		<Authors>stdray</Authors>
+		<Company>stdray</Company>
+		<PackageProjectUrl>https://github.com/stdray/yobaconf</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/stdray/yobaconf</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>yobaconf;configuration;config</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 	</PropertyGroup>
 
 	<ItemGroup>

@@ -16,6 +16,7 @@ var dockerCacheTo = Argument("dockerCacheTo", string.Empty);
 
 var solution = "./YobaConf.slnx";
 var webProject = "./src/YobaConf.Web/YobaConf.Web.csproj";
+var clientProject = "./src/YobaConf.Client/YobaConf.Client.csproj";
 var unitTestProject = "./tests/YobaConf.Tests/YobaConf.Tests.csproj";
 var e2eTestProject = "./tests/YobaConf.E2ETests/YobaConf.E2ETests.csproj";
 var dockerFile = "./src/YobaConf.Web/Dockerfile";
@@ -250,6 +251,53 @@ Task("DockerSmoke")
 // walking the tree. When a new test project lands (E2E in Phase B, perf, etc.),
 // append `.IsDependentOn("NewTestTarget")` so publish can never ship ahead of
 // any test suite. Mirrors the same rule in yobalog `build.cake`.
+Task("Pack")
+	.IsDependentOn("Build")
+	.Does(() =>
+{
+	var packSettings = new DotNetPackSettings
+	{
+		Configuration = configuration,
+		OutputDirectory = "./artifacts",
+		NoBuild = true,
+		NoRestore = true,
+		IncludeSource = false,
+		IncludeSymbols = true,
+		SymbolPackageFormat = "snupkg",
+		MSBuildSettings = new DotNetMSBuildSettings()
+			.WithProperty("Version", gitVersion.FullSemVer)
+			.WithProperty("InformationalVersion", $"{gitVersion.FullSemVer} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+	};
+
+	DotNetPack(clientProject, packSettings);
+});
+
+Task("NuGetPush")
+	.IsDependentOn("Pack")
+	.Does(() =>
+{
+	var apiKey = EnvironmentVariable("NUGET_API_KEY");
+
+	if (string.IsNullOrWhiteSpace(apiKey))
+	{
+		Warning("NUGET_API_KEY environment variable is not set. Skipping package publishing.");
+		return;
+	}
+
+	var packages = GetFiles("./artifacts/*.nupkg");
+
+	foreach (var package in packages)
+	{
+		DotNetNuGetPush(package, new DotNetNuGetPushSettings
+		{
+			Source = "https://api.nuget.org/v3/index.json",
+			ApiKey = apiKey
+		});
+
+		Information("Published package {0}", package.GetFilename());
+	}
+});
+
 Task("DockerPush")
 	.IsDependentOn("Test")
 	.IsDependentOn("E2ETest")
