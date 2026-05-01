@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaConf.Core.Bindings;
@@ -123,13 +124,27 @@ public sealed class EditModel : PageModel
         }
         else
         {
+            // Round-trip through JSON so ValuePlain always holds a canonical JSON-encoded
+            // scalar (e.g. "\"string\"", "42", "true", "null") — consistent with the
+            // Admin API PUT handler and the contract Binding.ValuePlain comment.
+            string canonicalScalar;
+            try
+            {
+                using var doc = JsonDocument.Parse(ValueText);
+                canonicalScalar = doc.RootElement.GetRawText();
+            }
+            catch (JsonException)
+            {
+                ErrorMessage = "Value must be valid JSON — quote strings (\"Information\"), use bare numbers (42), booleans (true), or null.";
+                return Page();
+            }
             candidate = new Binding
             {
                 Id = 0,
                 TagSet = tagSet,
                 KeyPath = KeyPath,
                 Kind = BindingKind.Plain,
-                ValuePlain = ValueText,
+                ValuePlain = canonicalScalar,
                 ContentHash = string.Empty,
                 UpdatedAt = now,
             };

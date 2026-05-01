@@ -363,4 +363,134 @@ public sealed class ResolvePipelineTests
         var conflict = outcome.Should().BeOfType<ResolveConflict>().Subject;
         conflict.Candidates.Should().AllSatisfy(c => c.ValueDisplay.Should().Be("<secret>"));
     }
+
+    // ---- EnsureJsonScalar: rogue bare values → valid JSON ----
+
+    [Fact]
+    public void BarePlainStringNotJsonEncoded_WrappedAsJsonString()
+    {
+        // Rogue row: ValuePlain=information (bare token, no JSON quotes).
+        // EnsureJsonScalar must detect non-JSON and wrap so resolve emits valid JSON.
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "log.level", "information"));
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>());
+
+        // Without the fix this would be {\"log\":{\"level\":information}} — invalid JSON.
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"log":{"level":"information"}}""");
+    }
+
+    [Fact]
+    public void BareStringWithJsonSpecialChars_EscapedCorrectly()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "k", "a\"b\\c"));
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>());
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"k":"a\u0022b\\c"}""");
+    }
+
+    [Fact]
+    public void NullValuePlain_ResolvesAsJsonNull()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(new Binding
+        {
+            Id = 0,
+            TagSet = TagSet.Empty,
+            KeyPath = "k",
+            Kind = BindingKind.Plain,
+            ValuePlain = null,
+            ContentHash = string.Empty,
+            UpdatedAt = DateTimeOffset.UnixEpoch,
+        });
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>());
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"k":null}""");
+    }
+
+    [Fact]
+    public void EmptyValuePlain_ResolvesAsJsonNull()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "k", ""));
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>());
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"k":null}""");
+    }
+
+    [Fact]
+    public void AlreadyValidJsonEncodedScalar_PassesThroughUntouched()
+    {
+        // Normal case: ValuePlain=\"\\\"Info\\\"\" — correctly JSON-encoded scalar.
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "log-level", "\"Info\""));
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>());
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"log-level":"Info"}""");
+    }
+
+    [Fact]
+    public void NumericPlain_ResolvesAsRawNumber()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "k", "42"));
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>());
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"k":42}""");
+    }
+
+    [Fact]
+    public void BooleanPlain_ResolvesAsRawBoolean()
+    {
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.Empty, "k", "true"));
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>());
+
+        outcome.Should().BeOfType<ResolveSuccess>()
+            .Which.Json.Should().Be("""{"k":true}""");
+    }
+
+    [Fact]
+    public void BarePlainString_ConflictDiagnostic_ShowsRawValue()
+    {
+        // Incomparable tie with bare values: diagnostic shows ValuePlain as-is.
+        // Resolve fails with 409, so EnsureJsonScalar isn't on the winning path,
+        // but the diagnostic must still be readable.
+        using var tmp = new TempDb();
+        var store = tmp.CreateStore();
+        store.Upsert(Plain(TagSet.From([new("env", "prod")]), "log-level", "Info"));
+        store.Upsert(Plain(TagSet.From([new("project", "yobapub")]), "log-level", "Debug"));
+
+        var outcome = new ResolvePipeline(store).Resolve(new Dictionary<string, string>
+        {
+            ["env"] = "prod",
+            ["project"] = "yobapub",
+        });
+
+        var conflict = outcome.Should().BeOfType<ResolveConflict>().Subject;
+        conflict.KeyPath.Should().Be("log-level");
+        conflict.Candidates.Should().HaveCount(2);
+        conflict.Candidates.Select(c => c.ValueDisplay).Should().Contain("Info").And.Contain("Debug");
+    }
 }
+

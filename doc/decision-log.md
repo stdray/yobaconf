@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-05-01 — Plain-binding invalid-JSON-scalar bug: root cause + dual fix
+
+**Баг:** на проде yobapub binding `log.level` имел `ValuePlain=information` (bare token, без JSON-кавычек). `GET /v1/conf` возвращал `{"log":{"level":information}}` — невалидный JSON, consumer-парсер падал на байте 70.
+
+**Два источника:**
+
+1. `Edit.cshtml.cs` OnPost для Plain делал `ValuePlain = ValueText` — записывал сырой пользовательский ввод ("Information" без кавычек) напрямую в колонку, нарушая контракт JSON-encoded scalar.
+2. `ResolvePipeline.DecryptSecrets` делал `leaves.Add((b.KeyPath, b.ValuePlain ?? "null"))` — передавал сырой ValuePlain в ExpandDotted/CanonicalJson, которая пишет leaf.ValueJson в выходной JSON без валидации.
+
+**Fix:** два слоя защиты:
+- **Preventive** (`Edit.cshtml.cs:125-140`): JsonDocument.Parse(ValueText).RootElement.GetRawText() — round-trip через JSON. Не-JSON ввод отвергается с человекочитаемой ошибкой ("Value must be valid JSON — quote strings...").
+- **Defensive** (`ResolvePipeline.cs:235-247`): `EnsureJsonScalar(string? raw)` — пробует JsonDocument.Parse, при провале оборачивает в JsonSerializer.Serialize. Даже rogue row из прямого SQLite-insert'а не сломает resolve.
+
+**Тесты:** 8 unit-тестов в `ResolvePipelineTests` (bare string → quoted, special chars escaped, null/empty → null, already-valid pass-through, numeric/bool pass-through, conflict-diagnostic with bare values). Verified: без fix'а тест BarePlainStringNotJsonEncoded_WrappedAsJsonString воспроизводит точный баг (invalid JSON), с fix'ом — зелёный.
+
+**Что откатили:** ничего — это net-new defensive layer.
+
+
 ## 2026-04-28 — Bootstrap api-keys из appsettings (`ConfigApiKeyStore`)
 
 **Решение:** добавлен `ConfigApiKeyStore` (read-only, in-memory, IOptions-driven) + `CompositeApiKeyStore` (first-match-wins) в `YobaConf.Core/Auth/`. DI разворачивает `IApiKeyStore` как Composite(Config, Sqlite); `IApiKeyAdmin` остаётся SQLite-only (config-keys immutable из UI). Секция `BootstrapApiKeys:Keys[]` в appsettings/env, формат:

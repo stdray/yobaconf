@@ -215,7 +215,7 @@ public sealed class ResolvePipeline
         {
             if (b.Kind == BindingKind.Plain)
             {
-                leaves.Add((b.KeyPath, b.ValuePlain ?? "null"));
+                leaves.Add((b.KeyPath, EnsureJsonScalar(b.ValuePlain)));
                 continue;
             }
             if (_encryptor is null)
@@ -226,6 +226,24 @@ public sealed class ResolvePipeline
             leaves.Add((b.KeyPath, JsonSerializer.Serialize(plaintext)));
         }
         return leaves;
+    }
+
+    // ValuePlain contract: JSON-encoded scalar ("\"hello\"", "42", "true", "null").
+    // Defensive fallback: if the stored value isn't valid JSON (rogue row from before
+    // the UI/API validation was tightened), wrap it as a JSON string so resolve always
+    // emits valid JSON.
+    static string EnsureJsonScalar(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "null";
+        try
+        {
+            using var _ = JsonDocument.Parse(raw);
+            return raw;
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.Serialize(raw);
+        }
     }
 
     // Expand dotted KeyPaths into a nested tree. `db.host` + `db.port` merges under a
