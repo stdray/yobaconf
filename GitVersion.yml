@@ -6,7 +6,7 @@ branches:
   main:
     regex: '^master$|^main$'
     increment: Patch
-    label: ''
+    label: 'ci'
     is-main-branch: true
 
   feature:

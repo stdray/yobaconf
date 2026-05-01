@@ -255,14 +255,7 @@ Task("Pack")
 	.IsDependentOn("Version")
 	.Does(() =>
 {
-	// NuGet rejects pure-numeric pre-release tags (0.1.0-121).
-	// Insert "ci." prefix to produce valid SemVer: 0.1.0-ci.121
-	var raw = gitVersion.FullSemVer;
-	var dashIdx = raw.IndexOf('-');
-	var buildVersion = dashIdx >= 0 && raw.Substring(dashIdx + 1).All(char.IsDigit)
-		? raw.Insert(dashIdx + 1, "ci.")
-		: raw;
-
+	var buildVersion = gitVersion.FullSemVer;
 
 	DotNetBuild(clientProject, new DotNetBuildSettings
 	{
