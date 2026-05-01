@@ -10,12 +10,11 @@ permissions:
   contents: read
   packages: write
 
-# Deduplicate runs on the same SHA — e.g. when a push to `main` and a subsequent
-# `git tag -f deploy && git push -f origin deploy` both point at the same commit.
-# The later trigger cancels the earlier in-progress run and drives the deploy itself.
-# For PRs, successive pushes to the same branch also cancel stale runs (free CI minutes).
+# Deduplicate runs on the same ref+sha — e.g. successive pushes to `main` cancel
+# stale runs. Different refs (main / deploy tag / nuget tag) on the same commit
+# get independent concurrency groups so nuget-publish doesn't cancel DockerPush.
 concurrency:
-  group: ci-${{ github.sha }}
+  group: ci-${{ github.ref_name }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -86,7 +85,7 @@ jobs:
   # Cake's DockerPush chain covers Test and E2ETest — self-contained pipeline.
   # `ci` job only runs on PRs and `publish` only on push events, no overlap.
   publish:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget'
     runs-on: ubuntu-latest
     outputs:
       dockerTag: ${{ steps.publish.outputs.dockerTag }}
