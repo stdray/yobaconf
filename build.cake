@@ -252,9 +252,22 @@ Task("DockerSmoke")
 // append `.IsDependentOn("NewTestTarget")` so publish can never ship ahead of
 // any test suite. Mirrors the same rule in yobalog `build.cake`.
 Task("Pack")
-	.IsDependentOn("Build")
+	.IsDependentOn("Version")
 	.Does(() =>
 {
+	var buildVersion = gitVersion.FullSemVer;
+
+	DotNetBuild(clientProject, new DotNetBuildSettings
+	{
+		Configuration = configuration,
+		NoRestore = true,
+		MSBuildSettings = new DotNetMSBuildSettings()
+			.WithProperty("Version", buildVersion)
+			.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+			.WithProperty("GitShortSha", gitVersion.ShortSha)
+			.WithProperty("GitCommitDate", gitVersion.CommitDate)
+	});
+
 	var packSettings = new DotNetPackSettings
 	{
 		Configuration = configuration,
@@ -265,8 +278,8 @@ Task("Pack")
 		IncludeSymbols = true,
 		SymbolPackageFormat = "snupkg",
 		MSBuildSettings = new DotNetMSBuildSettings()
-			.WithProperty("Version", gitVersion.FullSemVer)
-			.WithProperty("InformationalVersion", $"{gitVersion.FullSemVer} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+			.WithProperty("Version", buildVersion)
+			.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
 	};
 
 	DotNetPack(clientProject, packSettings);

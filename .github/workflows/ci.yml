@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['deploy']
+    tags: ['deploy', 'nuget']
   pull_request:
 
 permissions:
@@ -212,9 +212,9 @@ jobs:
               "$IMAGE"
             docker system prune -a -f
 
-  # ─── NuGet publish on push to main ───
+  # ─── NuGet publish on nuget tag push ───
   nuget-publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/tags/nuget'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
