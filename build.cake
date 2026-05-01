@@ -292,10 +292,7 @@ Task("NuGetPush")
 	var apiKey = EnvironmentVariable("NUGET_API_KEY");
 
 	if (string.IsNullOrWhiteSpace(apiKey))
-	{
-		Warning("NUGET_API_KEY environment variable is not set. Skipping package publishing.");
-		return;
-	}
+		throw new CakeException("NUGET_API_KEY environment variable is not set. NuGet publishing requires an API key from nuget.org/account/apikeys.");
 
 	var packages = GetFiles("./artifacts/*.nupkg");
 
